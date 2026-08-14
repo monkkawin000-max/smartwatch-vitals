@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Calendar นัดหมาย — Mockup</title>
+<style>
+  :root{
+    --bg:#EEF3F2; --card:#FFFFFF; --ink:#17313E; --ink-dim:#5B7280;
+    --teal:#0E7C86; --teal-deep:#0B5E66; --teal-soft:#DCEEEC;
+    --danger:#D64545; --line:#DCE6E4;
+    --mono:'JetBrains Mono',Consolas,monospace; --sans:'Space Grotesk','Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); padding-bottom:60px; }
+
+  .nav{ background:var(--card); border-bottom:1px solid var(--line); padding:12px 20px; display:flex;
+        align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+  .nav .who{ font-size:13px; font-weight:700; }
+  .nav .who span{ display:block; font-size:11px; font-weight:400; color:var(--ink-dim); }
+  .tabs{ display:flex; gap:4px; flex-wrap:wrap; }
+  .tabs a{ text-decoration:none; font-size:12px; padding:7px 12px; border-radius:9px; color:var(--ink-dim); white-space:nowrap; }
+  .tabs a.active{ background:var(--teal-soft); color:var(--teal-deep); font-weight:700; }
+  .logout{ font-size:12px; color:var(--danger); text-decoration:none; }
+
+  .badge-wrap{ max-width:1100px; margin:14px auto 0; padding:0 20px; }
+  .badge{ display:inline-block; font-size:10px; color:var(--teal-deep); background:var(--teal-soft); border-radius:8px; padding:4px 10px; }
+
+  .top{ max-width:1100px; margin:14px auto 18px; padding:0 20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; }
+  h1{ font-size:22px; margin:0; }
+  .month-title{ font-weight:700; font-size:16px; }
+
+  .layout{ max-width:1100px; margin:0 auto; padding:0 20px; display:grid; grid-template-columns: 1fr 300px; gap:18px; align-items:start; }
+  @media (max-width: 860px){ .layout{ grid-template-columns: 1fr; } }
+
+  .cal{ background:var(--card); border:1px solid var(--line); border-radius:16px; overflow:hidden; }
+  .weekdays{ display:grid; grid-template-columns: repeat(7,1fr); background:var(--teal-soft); }
+  .weekdays div{ padding:9px 0; text-align:center; font-size:11.5px; font-weight:700; color:var(--teal-deep); }
+  .grid{ display:grid; grid-template-columns: repeat(7,1fr); grid-auto-rows: minmax(78px, auto); }
+  .cell{ border-top:1px solid var(--line); border-right:1px solid var(--line); padding:6px; cursor:pointer; }
+  .cell:nth-child(7n){ border-right:none; }
+  .cell:hover{ background:#F7FBFA; }
+  .cell.otherMonth{ color:#C4CFCE; }
+  .cell.selected{ box-shadow: inset 0 0 0 2px var(--teal); }
+  .cell .num{ font-size:12px; font-weight:600; }
+  .chip{ margin-top:4px; background:var(--teal-soft); color:var(--teal-deep); font-size:9.5px; padding:2px 5px; border-radius:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .panel{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px 20px; }
+  .panel h2{ font-size:14px; margin:0 0 4px; }
+  .panel .sub{ font-size:11.5px; color:var(--ink-dim); margin:0 0 14px; }
+  .appt-item{ padding:9px 0; border-bottom:1px dashed var(--line); }
+  .appt-item .t{ font-family:var(--mono); font-size:12.5px; font-weight:700; color:var(--teal-deep); }
+  .appt-item .n{ font-size:13px; font-weight:600; }
+  .no-appt{ font-size:12.5px; color:var(--ink-dim); padding:10px 0; }
+
+  .add-form{ margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+  .add-form label{ display:block; font-size:11.5px; color:var(--ink-dim); margin-bottom:4px; }
+  .add-form select, .add-form input{ width:100%; padding:8px 10px; border-radius:9px; border:1px solid var(--line);
+    font-family:var(--sans); font-size:13px; margin-bottom:10px; background:#FBFDFC; color:var(--ink); }
+  .btn{ width:100%; border:none; border-radius:10px; padding:10px; background:var(--teal); color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
+  .btn:hover{ background:var(--teal-deep); }
+</style>
+</head>
+<body>
+
+  <div class="nav">
+    <div class="who">นพ. สมศักดิ์ <span>dr.somsak</span></div>
+    <div class="tabs">
+      <a href="dashboard.html">Dashboard</a>
+      <a href="calendar.html" class="active">ปฏิทิน</a>
+      <a href="device-pairing.html">ลงทะเบียนอุปกรณ์</a>
+      <a href="report.html">รายงาน</a>
+    </div>
+    <a class="logout" href="login.html">ออกจากระบบ</a>
+  </div>
+  <div class="badge-wrap"><span class="badge">MOCKUP — ข้อมูลตัวอย่าง ยังไม่เชื่อมระบบจริง</span></div>
+
+  <div class="top">
+    <h1>Calendar นัดหมาย</h1>
+    <div class="month-title">สิงหาคม 2569</div>
+  </div>
+
+  <div class="layout">
+    <div class="cal">
+      <div class="weekdays"><div>อา</div><div>จ</div><div>อ</div><div>พ</div><div>พฤ</div><div>ศ</div><div>ส</div></div>
+      <div class="grid" id="grid"></div>
+    </div>
+    <div class="panel">
+      <h2 id="panelDate">เลือกวันที่</h2>
+      <p class="sub">นัดหมายในวันที่เลือก</p>
+      <div id="apptList"><div class="no-appt">คลิกวันที่ในปฏิทินเพื่อดูนัดหมาย</div></div>
+
+      <div class="add-form">
+        <label>คนไข้</label>
+        <select><option>001 — monk</option><option>002 — ทนาย</option></select>
+        <label>เวลา</label>
+        <input type="time" value="09:00" />
+        <label>หมายเหตุ</label>
+        <input type="text" placeholder="เช่น นัดติดตามอาการ" />
+        <button class="btn" id="addBtn">+ เพิ่มนัดหมาย</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // สิงหาคม 2569 เริ่มวันเสาร์ (2026-08-01 = Saturday)
+  const startWeekday = 6;
+  const daysInMonth = 31;
+  const demoAppts = {
+    12: [{time:'10:00', name:'monk', note:'นัดติดตามอาการ'}],
+    14: [{time:'13:30', name:'ทนาย', note:'ตรวจเลือดประจำเดือน'}],
+    20: [{time:'09:30', name:'monk', note:'นัดตรวจแผลผ่าตัด'}],
+  };
+  const todayDate = 14; // วันนี้จำลอง
+
+  const grid = document.getElementById('grid');
+  let cellsHtml = '';
+  for (let i=0;i<startWeekday;i++) cellsHtml += `<div class="cell otherMonth"><div class="num">${30-startWeekday+i+1}</div></div>`;
+  for (let d=1; d<=daysInMonth; d++){
+    const appts = demoAppts[d] || [];
+    const chips = appts.map(a => `<div class="chip">${a.time} ${a.name}</div>`).join('');
+    cellsHtml += `<div class="cell" data-day="${d}"><div class="num">${d}</div>${chips}</div>`;
+  }
+  grid.innerHTML = cellsHtml;
+
+  function selectDay(day){
+    document.querySelectorAll('.cell').forEach(c => c.classList.remove('selected'));
+    const el = document.querySelector(`.cell[data-day="${day}"]`);
+    if (el) el.classList.add('selected');
+
+    document.getElementById('panelDate').textContent = `วันที่ ${day} สิงหาคม 2569`;
+    const appts = demoAppts[day] || [];
+    document.getElementById('apptList').innerHTML = appts.length
+      ? appts.map(a => `<div class="appt-item"><span class="t">${a.time}</span> — <span class="n">${a.name}</span><br><span style="font-size:11.5px;color:var(--ink-dim)">${a.note}</span></div>`).join('')
+      : '<div class="no-appt">ยังไม่มีนัดหมายในวันนี้</div>';
+  }
+
+  document.querySelectorAll('.cell[data-day]').forEach(el => {
+    el.addEventListener('click', () => selectDay(Number(el.dataset.day)));
+  });
+
+  document.getElementById('addBtn').addEventListener('click', () => {
+    alert('นี่คือหน้ามอคอัพตัวอย่าง — ยังไม่ได้เชื่อมกับระบบบันทึกจริง');
+  });
+
+  selectDay(todayDate);
+</script>
+</body>
+</html>

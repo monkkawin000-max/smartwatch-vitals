@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>นัดหมายของฉัน — Patient</title>
+<style>
+  :root{
+    --bg:#EEF3F2; --card:#FFFFFF; --ink:#17313E; --ink-dim:#5B7280;
+    --teal:#0E7C86; --teal-deep:#0B5E66; --teal-soft:#DCEEEC;
+    --amber:#E8A33D; --line:#DCE6E4;
+    --sans:'Space Grotesk','Segoe UI',sans-serif; --mono:'JetBrains Mono',Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; padding:32px 20px 60px; background:var(--bg); color:var(--ink); font-family:var(--sans); display:flex; flex-direction:column; align-items:center; }
+  .wrap{ width:100%; max-width:480px; }
+  h1{ font-size:20px; margin:0 0 4px; text-align:center; }
+  p.sub{ color:var(--ink-dim); font-size:13px; margin:0 0 22px; text-align:center; }
+
+  .picker{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px 18px; margin-bottom:20px; }
+  .picker label{ display:block; font-size:12px; color:var(--ink-dim); margin-bottom:6px; }
+  .picker select{ width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line); font-family:var(--sans); font-size:14px; background:#FBFDFC; color:var(--ink); }
+
+  .section-title{ font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-dim); margin: 22px 0 10px; }
+
+  .appt-card{ background:var(--card); border:1px solid var(--line); border-left:4px solid var(--teal); border-radius:14px; padding:14px 16px; margin-bottom:10px; }
+  .appt-card.past{ border-left-color:#C4CFCE; opacity:.7; }
+  .appt-card .date{ font-weight:700; font-size:15px; }
+  .appt-card .time{ font-family:var(--mono); font-size:13px; color:var(--teal-deep); font-weight:700; }
+  .appt-card .note{ font-size:12.5px; color:var(--ink-dim); margin-top:4px; }
+  .appt-card .badge{ display:inline-block; font-size:10px; background:var(--teal-soft); color:var(--teal-deep); padding:2px 8px; border-radius:8px; margin-left:6px; }
+
+  .empty{ text-align:center; color:var(--ink-dim); font-size:13px; padding:26px 10px; background:var(--card); border:1px solid var(--line); border-radius:14px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>นัดหมายของฉัน</h1>
+    <p class="sub">เลือกชื่อของคุณเพื่อดูวันนัดกับหมอ</p>
+
+    <div class="picker">
+      <label>คุณคือ</label>
+      <select id="patientSelect"><option value="">— เลือกชื่อของคุณ —</option></select>
+    </div>
+
+    <div id="results" style="display:none;">
+      <div class="section-title">นัดหมายที่จะถึง</div>
+      <div id="upcomingList"></div>
+
+      <div class="section-title">นัดหมายที่ผ่านมาแล้ว</div>
+      <div id="pastList"></div>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const monthNames = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+
+  function fmtDate(dateStr){
+    const d = new Date(dateStr + 'T00:00:00');
+    return `${d.getDate()} ${monthNames[d.getMonth()]} ${d.getFullYear()+543}`;
+  }
+  function todayStr(){
+    const t = new Date();
+    return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+  }
+
+  async function loadPatients(){
+    const res = await fetch('/api/patients');
+    const patients = await res.json();
+    $('patientSelect').innerHTML = '<option value="">— เลือกชื่อของคุณ —</option>' +
+      patients.map(p => `<option value="${p.patientId}">${p.name} (${p.patientId})</option>`).join('');
+  }
+
+  function renderCard(a, isPast){
+    return `
+      <div class="appt-card ${isPast ? 'past' : ''}">
+        <div class="date">${fmtDate(a.date)} <span class="time">${a.time}</span> ${!isPast ? '<span class="badge">กำลังจะถึง</span>' : ''}</div>
+        ${a.note ? `<div class="note">${a.note}</div>` : ''}
+      </div>`;
+  }
+
+  async function loadAppointments(patientId){
+    const res = await fetch('/api/appointments?patientId=' + encodeURIComponent(patientId));
+    const appts = await res.json();
+    const today = todayStr();
+
+    const upcoming = appts.filter(a => a.date >= today).sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time));
+    const past = appts.filter(a => a.date < today).sort((a,b) => (b.date+b.time).localeCompare(a.date+a.time));
+
+    $('upcomingList').innerHTML = upcoming.length
+      ? upcoming.map(a => renderCard(a, false)).join('')
+      : '<div class="empty">ยังไม่มีนัดหมายที่จะถึง</div>';
+
+    $('pastList').innerHTML = past.length
+      ? past.map(a => renderCard(a, true)).join('')
+      : '<div class="empty">ไม่มีประวัตินัดหมายที่ผ่านมา</div>';
+
+    $('results').style.display = 'block';
+  }
+
+  $('patientSelect').addEventListener('change', () => {
+    const pid = $('patientSelect').value;
+    if (!pid){ $('results').style.display = 'none'; return; }
+    loadAppointments(pid);
+  });
+
+  loadPatients();
+</script>
+</body>
+</html>

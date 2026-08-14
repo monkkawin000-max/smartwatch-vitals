@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Calendar นัดหมาย — Doctor</title>
+<style>
+  :root{
+    --bg:#EEF3F2; --card:#FFFFFF; --ink:#17313E; --ink-dim:#5B7280;
+    --teal:#0E7C86; --teal-deep:#0B5E66; --teal-soft:#DCEEEC;
+    --amber:#E8A33D; --danger:#D64545; --line:#DCE6E4;
+    --sans:'Space Grotesk','Segoe UI',sans-serif; --mono:'JetBrains Mono',Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; padding:24px 20px 60px; background:var(--bg); color:var(--ink); font-family:var(--sans); }
+  .top{ max-width:1100px; margin:0 auto 18px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+  h1{ font-size:22px; margin:0; }
+  .nav{ display:flex; align-items:center; gap:10px; }
+  .nav button{ border:1px solid var(--line); background:var(--card); border-radius:10px; width:32px; height:32px; cursor:pointer; font-size:15px; color:var(--ink); }
+  .nav button:hover{ border-color:var(--teal); color:var(--teal); }
+  .nav .month-title{ font-weight:700; font-size:16px; min-width:150px; text-align:center; }
+  .today-btn{ border:1px solid var(--line); background:var(--card); border-radius:10px; padding:7px 14px; font-size:12.5px; cursor:pointer; color:var(--ink); }
+  .today-btn:hover{ border-color:var(--teal); color:var(--teal); }
+
+  .layout{ max-width:1100px; margin:0 auto; display:grid; grid-template-columns: 1fr 300px; gap:18px; align-items:start; }
+  @media (max-width: 860px){ .layout{ grid-template-columns: 1fr; } }
+
+  .cal{ background:var(--card); border:1px solid var(--line); border-radius:16px; overflow:hidden; }
+  .weekdays{ display:grid; grid-template-columns: repeat(7,1fr); background:var(--teal-soft); }
+  .weekdays div{ padding:9px 0; text-align:center; font-size:11.5px; font-weight:700; color:var(--teal-deep); text-transform:uppercase; letter-spacing:.05em; }
+  .grid{ display:grid; grid-template-columns: repeat(7,1fr); grid-auto-rows: minmax(84px, auto); }
+  .cell{ border-top:1px solid var(--line); border-right:1px solid var(--line); padding:6px; cursor:pointer; transition: background .1s; position:relative; }
+  .cell:nth-child(7n){ border-right:none; }
+  .cell:hover{ background:#F7FBFA; }
+  .cell.otherMonth{ background:#FAFCFB; color:#C4CFCE; }
+  .cell.selected{ box-shadow: inset 0 0 0 2px var(--teal); }
+  .cell .num{ font-size:12px; font-weight:600; }
+  .cell.today .num{ display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:var(--teal); color:#fff; }
+  .chip{ margin-top:4px; background:var(--teal-soft); color:var(--teal-deep); font-size:10px; padding:2px 6px; border-radius:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .chip + .chip{ margin-top:3px; }
+  .more{ font-size:9.5px; color:var(--ink-dim); margin-top:3px; }
+
+  /* ---------- side panel ---------- */
+  .panel{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px 20px; }
+  .panel h2{ font-size:14px; margin:0 0 4px; }
+  .panel .sub{ font-size:11.5px; color:var(--ink-dim); margin:0 0 14px; }
+
+  .appt-item{ display:flex; justify-content:space-between; align-items:flex-start; gap:8px; padding:9px 0; border-bottom:1px dashed var(--line); }
+  .appt-item .t{ font-family:var(--mono); font-size:12.5px; font-weight:700; color:var(--teal-deep); min-width:44px; }
+  .appt-item .n{ font-size:13px; font-weight:600; }
+  .appt-item .note{ font-size:11.5px; color:var(--ink-dim); }
+  .appt-item .del{ border:none; background:none; color:var(--danger); cursor:pointer; font-size:15px; line-height:1; padding:2px 4px; }
+  .no-appt{ font-size:12.5px; color:var(--ink-dim); padding:10px 0; }
+
+  .add-form{ margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+  .add-form label{ display:block; font-size:11.5px; color:var(--ink-dim); margin-bottom:4px; }
+  .add-form select, .add-form input{
+    width:100%; padding:8px 10px; border-radius:9px; border:1px solid var(--line);
+    font-family:var(--sans); font-size:13px; margin-bottom:10px; background:#FBFDFC; color:var(--ink);
+  }
+  .btn{ width:100%; border:none; border-radius:10px; padding:10px; background:var(--teal); color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
+  .btn:hover{ background:var(--teal-deep); }
+</style>
+</head>
+<body>
+
+  <div class="top">
+    <h1>Calendar นัดหมาย</h1>
+    <div class="nav">
+      <button id="prevBtn">‹</button>
+      <div class="month-title" id="monthTitle">—</div>
+      <button id="nextBtn">›</button>
+      <button class="today-btn" id="todayBtn">วันนี้</button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="cal">
+      <div class="weekdays">
+        <div>อา</div><div>จ</div><div>อ</div><div>พ</div><div>พฤ</div><div>ศ</div><div>ส</div>
+      </div>
+      <div class="grid" id="grid"></div>
+    </div>
+
+    <div class="panel">
+      <h2 id="panelDate">เลือกวันที่</h2>
+      <p class="sub">นัดหมายในวันที่เลือก</p>
+      <div id="apptList"><div class="no-appt">คลิกวันที่ในปฏิทินเพื่อดูนัดหมาย</div></div>
+
+      <div class="add-form" id="addForm" style="display:none;">
+        <label>คนไข้</label>
+        <select id="patientSelect"><option value="">— เลือกคนไข้ —</option></select>
+        <label>เวลา</label>
+        <input type="time" id="timeInput" value="09:00" />
+        <label>หมายเหตุ</label>
+        <input type="text" id="noteInput" placeholder="เช่น นัดติดตามอาการ" />
+        <button class="btn" id="addBtn">+ เพิ่มนัดหมาย</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const monthNames = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+
+  let viewYear, viewMonth; // viewMonth: 0-11
+  let selectedDate = null; // "YYYY-MM-DD"
+  let appointmentsCache = []; // นัดหมายทั้งหมด (โหลดครั้งเดียวต่อเดือนที่โชว์)
+  let patients = [];
+
+  const today = new Date();
+  viewYear = today.getFullYear();
+  viewMonth = today.getMonth();
+
+  function pad(n){ return String(n).padStart(2,'0'); }
+  function toDateStr(y,m,d){ return `${y}-${pad(m+1)}-${pad(d)}`; }
+
+  async function loadPatients(){
+    const res = await fetch('/api/patients');
+    patients = await res.json();
+    $('patientSelect').innerHTML = '<option value="">— เลือกคนไข้ —</option>' +
+      patients.map(p => `<option value="${p.patientId}">${p.patientId} — ${p.name}</option>`).join('');
+  }
+
+  async function loadAppointments(){
+    const res = await fetch('/api/appointments');
+    appointmentsCache = await res.json();
+  }
+
+  function renderCalendar(){
+    $('monthTitle').textContent = `${monthNames[viewMonth]} ${viewYear + 543}`;
+
+    const firstDay = new Date(viewYear, viewMonth, 1);
+    const startWeekday = firstDay.getDay(); // 0 = อาทิตย์
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    const daysInPrevMonth = new Date(viewYear, viewMonth, 0).getDate();
+
+    const cells = [];
+    // วันจากเดือนก่อนหน้า (เติมให้เต็มแถวแรก)
+    for (let i = startWeekday - 1; i >= 0; i--){
+      const d = daysInPrevMonth - i;
+      const m = viewMonth === 0 ? 11 : viewMonth - 1;
+      const y = viewMonth === 0 ? viewYear - 1 : viewYear;
+      cells.push({ day:d, month:m, year:y, otherMonth:true });
+    }
+    // วันในเดือนนี้
+    for (let d = 1; d <= daysInMonth; d++){
+      cells.push({ day:d, month:viewMonth, year:viewYear, otherMonth:false });
+    }
+    // เติมแถวสุดท้ายด้วยเดือนถัดไป
+    while (cells.length % 7 !== 0){
+      const idx = cells.length - (startWeekday + daysInMonth);
+      const m = viewMonth === 11 ? 0 : viewMonth + 1;
+      const y = viewMonth === 11 ? viewYear + 1 : viewYear;
+      cells.push({ day: idx, month:m, year:y, otherMonth:true });
+    }
+
+    const todayStr = toDateStr(today.getFullYear(), today.getMonth(), today.getDate());
+
+    $('grid').innerHTML = cells.map(c => {
+      const dateStr = toDateStr(c.year, c.month, c.day);
+      const isToday = dateStr === todayStr;
+      const dayAppts = appointmentsCache.filter(a => a.date === dateStr);
+      const chips = dayAppts.slice(0,3).map(a => `<div class="chip">${a.time} ${a.patientName}</div>`).join('');
+      const more = dayAppts.length > 3 ? `<div class="more">+${dayAppts.length - 3} เพิ่มเติม</div>` : '';
+      return `<div class="cell ${c.otherMonth?'otherMonth':''} ${isToday?'today':''} ${dateStr===selectedDate?'selected':''}" data-date="${dateStr}">
+        <div class="num">${c.day}</div>
+        ${chips}${more}
+      </div>`;
+    }).join('');
+
+    $('grid').querySelectorAll('.cell').forEach(el => {
+      el.addEventListener('click', () => selectDate(el.dataset.date));
+    });
+  }
+
+  function selectDate(dateStr){
+    selectedDate = dateStr;
+    const d = new Date(dateStr + 'T00:00:00');
+    $('panelDate').textContent = `วันที่ ${d.getDate()} ${monthNames[d.getMonth()]} ${d.getFullYear()+543}`;
+
+    const dayAppts = appointmentsCache.filter(a => a.date === dateStr).sort((a,b)=>a.time.localeCompare(b.time));
+    $('apptList').innerHTML = dayAppts.length
+      ? dayAppts.map(a => `
+        <div class="appt-item" data-id="${a.id}">
+          <div>
+            <div class="t">${a.time}</div>
+          </div>
+          <div style="flex:1;">
+            <div class="n">${a.patientName}</div>
+            ${a.note ? `<div class="note">${a.note}</div>` : ''}
+          </div>
+          <button class="del" data-id="${a.id}" title="ยกเลิกนัด">✕</button>
+        </div>
+      `).join('')
+      : '<div class="no-appt">ยังไม่มีนัดหมายในวันนี้</div>';
+
+    $('apptList').querySelectorAll('.del').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm('ยกเลิกนัดหมายนี้?')) return;
+        await fetch('/api/appointments/' + btn.dataset.id, { method: 'DELETE' });
+        await loadAppointments();
+        renderCalendar();
+        selectDate(dateStr);
+      });
+    });
+
+    $('addForm').style.display = 'block';
+    renderCalendar();
+  }
+
+  $('addBtn').addEventListener('click', async () => {
+    const patientId = $('patientSelect').value;
+    const time = $('timeInput').value;
+    const note = $('noteInput').value.trim();
+    if (!selectedDate){ alert('กรุณาเลือกวันที่ก่อน'); return; }
+    if (!patientId){ alert('กรุณาเลือกคนไข้'); return; }
+    if (!time){ alert('กรุณาระบุเวลา'); return; }
+
+    const res = await fetch('/api/appointments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patientId, date: selectedDate, time, note }),
+    });
+    const data = await res.json();
+    if (!res.ok){ alert(data.error || 'เพิ่มนัดหมายไม่สำเร็จ'); return; }
+
+    $('noteInput').value = '';
+    await loadAppointments();
+    selectDate(selectedDate);
+  });
+
+  $('prevBtn').addEventListener('click', () => {
+    viewMonth--; if (viewMonth < 0){ viewMonth = 11; viewYear--; }
+    renderCalendar();
+  });
+  $('nextBtn').addEventListener('click', () => {
+    viewMonth++; if (viewMonth > 11){ viewMonth = 0; viewYear++; }
+    renderCalendar();
+  });
+  $('todayBtn').addEventListener('click', () => {
+    viewYear = today.getFullYear(); viewMonth = today.getMonth();
+    renderCalendar();
+    selectDate(toDateStr(today.getFullYear(), today.getMonth(), today.getDate()));
+  });
+
+  (async function init(){
+    await loadPatients();
+    await loadAppointments();
+    renderCalendar();
+    selectDate(toDateStr(today.getFullYear(), today.getMonth(), today.getDate()));
+  })();
+</script>
+</body>
+</html>
