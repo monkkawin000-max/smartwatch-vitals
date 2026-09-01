@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ออกรหัสผู้ใช้ใหม่ — IT</title>
+<style>
+  :root{
+    --bg:#EEF3F2; --card:#FFFFFF; --ink:#17313E; --ink-dim:#5B7280;
+    --teal:#0E7C86; --teal-deep:#0B5E66; --teal-soft:#DCEEEC;
+    --danger:#D64545; --amber:#E8A33D; --line:#DCE6E4;
+    --mono:'JetBrains Mono',Consolas,monospace; --sans:'Space Grotesk','Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); padding-bottom:60px; }
+
+  .nav{ background:var(--card); border-bottom:1px solid var(--line); padding:12px 20px; display:flex;
+        align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+  .nav .who{ font-size:13px; font-weight:700; }
+  .nav .who span{ display:block; font-size:11px; font-weight:400; color:var(--ink-dim); }
+  .tabs{ display:flex; gap:4px; flex-wrap:wrap; }
+  .tabs a{ text-decoration:none; font-size:12px; padding:7px 12px; border-radius:9px; color:var(--ink-dim); white-space:nowrap; }
+  .tabs a.active{ background:var(--teal-soft); color:var(--teal-deep); font-weight:700; }
+  .logout{ font-size:12px; color:var(--danger); text-decoration:none; cursor:pointer; }
+
+  .wrap{ max-width:760px; margin:0 auto; padding:20px 20px 0; }
+  h1{ font-size:22px; margin:0 0 4px; }
+  p.sub{ color:var(--ink-dim); font-size:13px; margin:0 0 18px; }
+
+  .role-toggle{ display:flex; gap:8px; margin-bottom:18px; }
+  .role-toggle button{
+    flex:1; padding:10px; border-radius:10px; border:1px solid var(--line); background:var(--card);
+    font-family:var(--sans); font-size:13.5px; font-weight:700; color:var(--ink-dim); cursor:pointer;
+  }
+  .role-toggle button.active{ background:var(--teal); color:#fff; border-color:var(--teal); }
+
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:20px 22px; margin-bottom:18px; }
+  .card h2{ font-size:14px; margin:0 0 4px; }
+  .card .hint{ font-size:12px; color:var(--ink-dim); margin:0 0 16px; }
+  label{ display:block; font-size:12px; color:var(--ink-dim); margin:0 0 6px; }
+  input{ width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line);
+    font-family:var(--sans); font-size:13.5px; margin-bottom:14px; background:#FBFDFC; color:var(--ink); }
+  .two-col{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+  .btn{ border:none; border-radius:10px; padding:11px 20px; background:var(--teal); color:#fff; font-weight:700; font-size:13.5px; cursor:pointer; }
+  .btn:hover{ background:var(--teal-deep); }
+  .btn.secondary{ background:#fff; color:var(--teal-deep); border:1px solid var(--teal); }
+  .btn:disabled{ background:#9FB6B4; cursor:not-allowed; }
+
+  .search-result{ margin-top:14px; padding:14px 16px; border-radius:12px; font-size:13px; }
+  .search-result.found-active{ background:#FDF3E3; color:#8A5A0A; }
+  .search-result.found-inactive{ background:var(--teal-soft); color:var(--teal-deep); }
+  .search-result .id{ font-family:var(--mono); font-weight:700; }
+
+  .result{ display:none; background:var(--teal-soft); border-radius:12px; padding:16px 18px; margin-top:6px; }
+  .result .code{ font-family:var(--mono); font-size:22px; font-weight:700; color:var(--teal-deep); }
+  .result .label{ font-size:11px; color:var(--teal-deep); text-transform:uppercase; letter-spacing:.05em; }
+
+  .error-box{ background:#FDECEC; color:var(--danger); border:1px solid #F3C7C7; border-radius:10px; padding:9px 12px; font-size:12.5px; margin-bottom:14px; }
+
+  table{ width:100%; border-collapse:collapse; }
+  th, td{ text-align:left; padding:9px 8px; font-size:12.5px; border-bottom:1px solid var(--line); }
+  th{ font-size:10.5px; text-transform:uppercase; color:var(--ink-dim); font-weight:600; }
+  td.code{ font-family:var(--mono); font-size:12px; }
+  .status{ font-size:10.5px; padding:2px 8px; border-radius:8px; font-weight:700; }
+  .status.active{ background:var(--teal-soft); color:var(--teal-deep); }
+  .status.inactive{ background:#F3E7E7; color:var(--danger); }
+  .action-btn{ border:none; border-radius:8px; padding:5px 10px; font-size:11.5px; font-weight:700; cursor:pointer; white-space:nowrap; }
+  .action-btn.deactivate{ background:#FDECEC; color:var(--danger); }
+  .action-btn.deactivate:hover{ background:#F8D5D5; }
+  .action-btn.reactivate{ background:var(--teal-soft); color:var(--teal-deep); }
+  .action-btn.reactivate:hover{ background:#C9E5E2; }
+</style>
+</head>
+<body>
+
+  <div class="nav">
+    <div class="who" id="whoBox">จนท. IT <span>...</span></div>
+    <div class="tabs">
+      <a href="new-patient.html" class="active">ออกรหัสผู้ใช้ใหม่</a>
+      <a href="forgot-password.html">ช่วยเหลือลืมรหัส</a>
+      <a href="device-pairing.html">ลงทะเบียนอุปกรณ์</a>
+    </div>
+    <a class="logout" id="logoutLink">ออกจากระบบ</a>
+  </div>
+
+  <div class="wrap">
+    <h1>ออกรหัสผู้ใช้ใหม่</h1>
+    <p class="sub">ค้นหาก่อนทุกครั้ง เพื่อกันสร้างซ้ำ และเปิดบัญชีคืนให้คนที่เคยปิดไปแล้วได้</p>
+
+    <div class="role-toggle">
+      <button id="tabPatient" class="active">คนไข้</button>
+      <button id="tabDoctor">แพทย์</button>
+    </div>
+
+    <div class="card">
+      <h2 id="searchTitle">ค้นหาคนไข้</h2>
+      <p class="hint">พิมพ์ชื่อ หรือรหัส แล้วระบบจะค้นให้อัตโนมัติ</p>
+      <label>ชื่อ หรือ รหัส</label>
+      <input type="text" id="searchInput" placeholder="เช่น monk หรือ 001" />
+      <div id="searchResult"></div>
+    </div>
+
+    <div class="card" id="createCard" style="display:none;">
+      <h2 id="createTitle">ลงทะเบียนคนไข้ใหม่</h2>
+      <p class="hint">กรอกข้อมูล ระบบจะสร้างรหัสให้อัตโนมัติ</p>
+      <div class="error-box" id="createError" style="display:none;"></div>
+
+      <label>ชื่อ-นามสกุล</label>
+      <input type="text" id="newName" placeholder="เช่น สมหญิง มีสุข" />
+
+      <div id="patientOnlyFields" class="two-col">
+        <div>
+          <label>อายุ (ไม่บังคับ)</label>
+          <input type="number" id="newAge" placeholder="เช่น 45" />
+        </div>
+        <div>
+          <label>หมายเหตุ (ไม่บังคับ)</label>
+          <input type="text" id="newNote" placeholder="เช่น เบอร์ติดต่อ" />
+        </div>
+      </div>
+
+      <label>ตั้งรหัสผ่านเริ่มต้น</label>
+      <input type="password" id="newPassword" placeholder="ให้คนไข้/หมอไปเปลี่ยนเองทีหลังได้" />
+
+      <button class="btn" id="createBtn">สร้างบัญชี</button>
+
+      <div class="result" id="createResult">
+        <div class="label" id="createResultLabel">รหัสที่ออกให้</div>
+        <div class="code" id="createResultCode">—</div>
+        <div class="hint" style="margin-top:6px;">มอบรหัสและรหัสผ่านนี้ให้เจ้าตัว เพื่อใช้เข้าสู่ระบบ</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 id="listTitle">รายชื่อคนไข้ทั้งหมด</h2>
+      <table>
+        <thead><tr><th>รหัส</th><th>ชื่อ</th><th>สถานะ</th><th></th></tr></thead>
+        <tbody id="listBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let currentRole = 'patient'; // 'patient' | 'doctor'
+  let patients = [];
+  let doctors = [];
+
+  // ---------- session check + logout ----------
+  async function checkAuth(){
+    const res = await fetch('/api/auth/me', { credentials: 'include' });
+    const data = await res.json();
+    if (!data.loggedIn || data.user.role !== 'it'){
+      window.location.href = 'login.html';
+      return;
+    }
+    $('whoBox').innerHTML = `${data.user.name} <span>${data.user.username}</span>`;
+  }
+  $('logoutLink').addEventListener('click', async () => {
+    await fetch('/api/auth/logout', { method:'POST', credentials:'include' });
+    window.location.href = 'login.html';
+  });
+
+  // ---------- โหลดข้อมูล ----------
+  async function loadAll(){
+    const [pRes, dRes] = await Promise.all([
+      fetch('/api/patients', { credentials:'include' }),
+      fetch('/api/doctors', { credentials:'include' }),
+    ]);
+    patients = await pRes.json();
+    doctors = await dRes.json();
+    renderList();
+  }
+
+  function renderList(){
+    const list = currentRole === 'patient' ? patients : doctors;
+    const idKey = currentRole === 'patient' ? 'patientId' : 'doctorId';
+    $('listTitle').textContent = currentRole === 'patient' ? 'รายชื่อคนไข้ทั้งหมด' : 'รายชื่อแพทย์ทั้งหมด';
+    $('listBody').innerHTML = list.length
+      ? list.map(x => `
+        <tr>
+          <td class="code">${x[idKey]}</td>
+          <td>${x.name}</td>
+          <td><span class="status ${x.active ? 'active' : 'inactive'}">${x.active ? 'ใช้งานอยู่' : 'ปิดบัญชี'}</span></td>
+          <td>
+            ${x.active
+              ? `<button class="action-btn deactivate" data-id="${x[idKey]}" data-action="deactivate">ปิดบัญชี</button>`
+              : `<button class="action-btn reactivate" data-id="${x[idKey]}" data-action="reactivate">เปิดบัญชีคืน</button>`}
+          </td>
+        </tr>`).join('')
+      : `<tr><td colspan="4" style="color:var(--ink-dim); text-align:center; padding:16px;">ยังไม่มีข้อมูล</td></tr>`;
+
+    $('listBody').querySelectorAll('.action-btn').forEach(btn => {
+      btn.addEventListener('click', () => toggleAccountStatus(btn.dataset.id, btn.dataset.action));
+    });
+  }
+
+  async function toggleAccountStatus(id, action){
+    const list = currentRole === 'patient' ? patients : doctors;
+    const idKey = currentRole === 'patient' ? 'patientId' : 'doctorId';
+    const person = list.find(x => x[idKey] === id);
+    const name = person ? person.name : id;
+
+    const confirmMsg = action === 'deactivate'
+      ? `ยืนยันปิดบัญชี "${name}" (${id}) ใช่หรือไม่?\n\nประวัติข้อมูลทั้งหมดจะยังอยู่ครบ และเปิดบัญชีคืนได้ภายหลัง`
+      : `ยืนยันเปิดบัญชี "${name}" (${id}) คืนใช่หรือไม่?\n\nจะกลับมาใช้รหัสเดิมได้ทันที`;
+
+    if (!confirm(confirmMsg)) return;
+
+    const base = currentRole === 'patient' ? '/api/patients/' : '/api/doctors/';
+    const res = await fetch(base + encodeURIComponent(id) + '/' + action, {
+      method: 'PATCH', credentials: 'include',
+    });
+    const data = await res.json();
+    if (!res.ok){ alert(data.error || 'ดำเนินการไม่สำเร็จ'); return; }
+
+    await loadAll();
+    doSearch();
+  }
+
+  // ---------- สลับแท็บ คนไข้/แพทย์ ----------
+  function setRole(role){
+    currentRole = role;
+    $('tabPatient').classList.toggle('active', role === 'patient');
+    $('tabDoctor').classList.toggle('active', role === 'doctor');
+    $('searchTitle').textContent = role === 'patient' ? 'ค้นหาคนไข้' : 'ค้นหาแพทย์';
+    $('createTitle').textContent = role === 'patient' ? 'ลงทะเบียนคนไข้ใหม่' : 'ลงทะเบียนแพทย์ใหม่';
+    $('patientOnlyFields').style.display = role === 'patient' ? 'grid' : 'none';
+    $('searchInput').value = '';
+    $('searchResult').innerHTML = '';
+    $('createCard').style.display = 'none';
+    $('createError').style.display = 'none';
+    $('createResult').style.display = 'none';
+    renderList();
+  }
+  $('tabPatient').addEventListener('click', () => setRole('patient'));
+  $('tabDoctor').addEventListener('click', () => setRole('doctor'));
+
+  // ---------- ค้นหา ----------
+  function doSearch(){
+    const q = $('searchInput').value.trim().toLowerCase();
+    const resultBox = $('searchResult');
+    $('createCard').style.display = 'none';
+
+    if (!q){
+      resultBox.innerHTML = '';
+      return;
+    }
+
+    const list = currentRole === 'patient' ? patients : doctors;
+    const idKey = currentRole === 'patient' ? 'patientId' : 'doctorId';
+    const match = list.find(x => x.name.toLowerCase().includes(q) || x[idKey].toLowerCase().includes(q));
+
+    if (!match){
+      resultBox.innerHTML = `<div class="search-result found-inactive" style="background:#F7FBFA; color:var(--ink-dim);">ไม่พบในระบบ — กรอกฟอร์มด้านล่างเพื่อลงทะเบียนใหม่</div>`;
+      $('createCard').style.display = 'block';
+      $('newName').value = q.match(/^\d+$/) ? '' : $('searchInput').value.trim(); // เติมชื่อที่ค้นหาให้อัตโนมัติถ้าไม่ใช่ตัวเลข
+      return;
+    }
+
+    if (match.active){
+      resultBox.innerHTML = `<div class="search-result found-active">พบในระบบแล้ว: <span class="id">${match[idKey]}</span> — ${match.name} (ใช้งานอยู่ ไม่ต้องสร้างซ้ำ)</div>`;
+    } else {
+      resultBox.innerHTML = `
+        <div class="search-result found-inactive">
+          พบในระบบ: <span class="id">${match[idKey]}</span> — ${match.name} (ปิดบัญชีอยู่)
+          <div style="margin-top:8px;"><button class="btn secondary" id="reactivateBtn">เปิดบัญชีคืน (ใช้รหัสเดิม)</button></div>
+        </div>`;
+      $('reactivateBtn').addEventListener('click', () => reactivate(match[idKey]));
+    }
+  }
+  $('searchInput').addEventListener('input', doSearch);
+
+  async function reactivate(id){
+    const endpoint = currentRole === 'patient'
+      ? `/api/patients/${encodeURIComponent(id)}/reactivate`
+      : `/api/doctors/${encodeURIComponent(id)}/reactivate`;
+    const res = await fetch(endpoint, { method:'PATCH', credentials:'include' });
+    const data = await res.json();
+    if (!res.ok){ alert(data.error || 'เปิดบัญชีคืนไม่สำเร็จ'); return; }
+    alert('เปิดบัญชีคืนเรียบร้อยแล้ว');
+    await loadAll();
+    doSearch();
+  }
+
+  // ---------- สร้างบัญชีใหม่ ----------
+  $('createBtn').addEventListener('click', async () => {
+    $('createError').style.display = 'none';
+    const name = $('newName').value.trim();
+    const password = $('newPassword').value;
+
+    if (!name){ showCreateError('กรุณากรอกชื่อ'); return; }
+    if (!password){ showCreateError('กรุณาตั้งรหัสผ่านเริ่มต้น'); return; }
+
+    $('createBtn').disabled = true;
+    $('createBtn').textContent = 'กำลังสร้าง...';
+
+    try {
+      let res, data;
+      if (currentRole === 'patient'){
+        const age = $('newAge').value;
+        const note = $('newNote').value.trim();
+        res = await fetch('/api/patients', {
+          method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include',
+          body: JSON.stringify({ name, age: age || null, note, password }),
+        });
+      } else {
+        res = await fetch('/api/doctors', {
+          method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include',
+          body: JSON.stringify({ name, password }),
+        });
+      }
+      data = await res.json();
+      if (!res.ok){ showCreateError(data.error || 'สร้างบัญชีไม่สำเร็จ'); return; }
+
+      const created = currentRole === 'patient' ? data.patient : data.doctor;
+      const idKey = currentRole === 'patient' ? 'patientId' : 'doctorId';
+      $('createResultLabel').textContent = currentRole === 'patient' ? 'รหัสคนไข้ที่ออกให้' : 'รหัสแพทย์ที่ออกให้';
+      $('createResultCode').textContent = created[idKey];
+      $('createResult').style.display = 'block';
+
+      $('newName').value = ''; $('newAge').value = ''; $('newNote').value = ''; $('newPassword').value = '';
+      await loadAll();
+    } catch (err) {
+      showCreateError('เชื่อมต่อ server ไม่ได้ กรุณาลองใหม่');
+    } finally {
+      $('createBtn').disabled = false;
+      $('createBtn').textContent = 'สร้างบัญชี';
+    }
+  });
+
+  function showCreateError(msg){
+    $('createError').textContent = msg;
+    $('createError').style.display = 'block';
+  }
+
+  (async function init(){
+    await checkAuth();
+    await loadAll();
+  })();
+</script>
+</body>
+</html>

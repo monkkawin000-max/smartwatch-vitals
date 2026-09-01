@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ลงทะเบียนอุปกรณ์ — IT</title>
+<style>
+  :root{
+    --bg:#EEF3F2; --card:#FFFFFF; --ink:#17313E; --ink-dim:#5B7280;
+    --teal:#0E7C86; --teal-deep:#0B5E66; --teal-soft:#DCEEEC;
+    --danger:#D64545; --line:#DCE6E4;
+    --mono:'JetBrains Mono',Consolas,monospace; --sans:'Space Grotesk','Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); padding-bottom:60px; }
+
+  .nav{ background:var(--card); border-bottom:1px solid var(--line); padding:12px 20px; display:flex;
+        align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+  .nav .who{ font-size:13px; font-weight:700; }
+  .nav .who span{ display:block; font-size:11px; font-weight:400; color:var(--ink-dim); }
+  .tabs{ display:flex; gap:4px; flex-wrap:wrap; }
+  .tabs a{ text-decoration:none; font-size:12px; padding:7px 12px; border-radius:9px; color:var(--ink-dim); white-space:nowrap; }
+  .tabs a.active{ background:var(--teal-soft); color:var(--teal-deep); font-weight:700; }
+  .logout{ font-size:12px; color:var(--danger); text-decoration:none; cursor:pointer; }
+
+  .badge-wrap{ max-width:760px; margin:14px auto 0; padding:0 20px; }
+  .badge{ display:inline-block; font-size:10px; color:var(--teal-deep); background:var(--teal-soft); border-radius:8px; padding:4px 10px; }
+
+  .wrap{ max-width:760px; margin:0 auto; padding:14px 20px 0; }
+  h1{ font-size:22px; margin:0 0 4px; }
+  p.sub{ color:var(--ink-dim); font-size:13px; margin:0 0 20px; }
+
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:20px 22px; margin-bottom:20px; }
+  .card h2{ font-size:14px; margin:0 0 4px; }
+  .card .hint{ font-size:12px; color:var(--ink-dim); margin:0 0 16px; }
+  .two-col{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+  label{ display:block; font-size:12px; color:var(--ink-dim); margin:0 0 6px; }
+  select, input{ width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line);
+    font-family:var(--sans); font-size:13.5px; margin-bottom:14px; background:#FBFDFC; color:var(--ink); }
+  .btn{ border:none; border-radius:10px; padding:11px 20px; background:var(--teal); color:#fff; font-weight:700; font-size:13.5px; cursor:pointer; }
+  .btn:hover{ background:var(--teal-deep); }
+  .btn:disabled{ background:#9FB6B4; cursor:not-allowed; }
+
+  .error-box{ background:#FDECEC; color:var(--danger); border:1px solid #F3C7C7; border-radius:10px; padding:9px 12px; font-size:12.5px; margin-bottom:14px; }
+
+  table{ width:100%; border-collapse:collapse; }
+  th, td{ text-align:left; padding:10px 8px; font-size:13px; border-bottom:1px solid var(--line); }
+  th{ font-size:11px; text-transform:uppercase; color:var(--ink-dim); font-weight:600; }
+  td.device{ font-family:var(--mono); font-size:12.5px; }
+  .unlink{ color:var(--danger); background:none; border:none; cursor:pointer; font-size:12px; }
+</style>
+</head>
+<body>
+
+  <div class="nav">
+    <div class="who" id="whoBox">จนท. IT <span>...</span></div>
+    <div class="tabs">
+      <a href="new-patient.html">ออกรหัสผู้ใช้ใหม่</a>
+      <a href="forgot-password.html">ช่วยเหลือลืมรหัส</a>
+      <a href="device-pairing.html" class="active">ลงทะเบียนอุปกรณ์</a>
+    </div>
+    <a class="logout" id="logoutLink">ออกจากระบบ</a>
+  </div>
+  <div class="badge-wrap"><span class="badge">Device ID เป็นการพิมพ์มือชั่วคราว ยังไม่เชื่อมต่อ Bluetooth จริง</span></div>
+
+  <div class="wrap">
+    <h1>ลงทะเบียนอุปกรณ์</h1>
+    <p class="sub">ผูก Smart Watch เข้ากับคนไข้แต่ละคน — 1 คนไข้ผูกได้ 1 เครื่องเท่านั้น</p>
+
+    <div class="card">
+      <h2>ผูกอุปกรณ์ใหม่</h2>
+      <p class="hint">เลือกคนไข้ (เฉพาะคนที่ใช้งานอยู่และยังไม่มีอุปกรณ์) แล้วกรอกหมายเลขอุปกรณ์</p>
+      <div class="error-box" id="pairError" style="display:none;"></div>
+      <div class="two-col">
+        <div>
+          <label>เลือกคนไข้</label>
+          <select id="patientSelect"><option value="">— เลือกคนไข้ —</option></select>
+        </div>
+        <div>
+          <label>หมายเลขอุปกรณ์ (Device ID)</label>
+          <input type="text" id="deviceIdInput" placeholder="เช่น SW-2026-00931" />
+        </div>
+      </div>
+      <button class="btn" id="pairBtn">ผูกอุปกรณ์</button>
+    </div>
+
+    <div class="card">
+      <h2>อุปกรณ์ที่ผูกแล้ว</h2>
+      <table>
+        <thead><tr><th>คนไข้</th><th>หมายเลขอุปกรณ์</th><th>วันที่ผูก</th><th></th></tr></thead>
+        <tbody id="deviceList"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let patients = [];
+  let devices = [];
+
+  async function checkAuth(){
+    const res = await fetch('/api/auth/me', { credentials: 'include' });
+    const data = await res.json();
+    if (!data.loggedIn || data.user.role !== 'it'){
+      window.location.href = 'login.html';
+      return;
+    }
+    $('whoBox').innerHTML = `${data.user.name} <span>${data.user.username}</span>`;
+  }
+  $('logoutLink').addEventListener('click', async () => {
+    await fetch('/api/auth/logout', { method:'POST', credentials:'include' });
+    window.location.href = 'login.html';
+  });
+
+  function fmtDate(iso){
+    const d = new Date(iso);
+    const monthNames = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+    return `${d.getDate()} ${monthNames[d.getMonth()]} ${d.getFullYear()+543}`;
+  }
+
+  async function loadAll(){
+    const [pRes, dRes] = await Promise.all([
+      fetch('/api/patients', { credentials:'include' }),
+      fetch('/api/devices', { credentials:'include' }),
+    ]);
+    patients = await pRes.json();
+    devices = await dRes.json();
+    renderDropdown();
+    renderDeviceList();
+  }
+
+  function renderDropdown(){
+    // เฉพาะคนไข้ที่ active และยังไม่มีอุปกรณ์ผูกอยู่
+    const pairedIds = new Set(devices.map(dv => dv.patientId));
+    const available = patients.filter(p => p.active && !pairedIds.has(p.patientId));
+    $('patientSelect').innerHTML = '<option value="">— เลือกคนไข้ —</option>' +
+      available.map(p => `<option value="${p.patientId}">${p.patientId} — ${p.name}</option>`).join('');
+  }
+
+  function renderDeviceList(){
+    $('deviceList').innerHTML = devices.length
+      ? devices.map(dv => `
+        <tr>
+          <td>${dv.patientId} — ${dv.patientName}</td>
+          <td class="device">${dv.deviceId}</td>
+          <td>${fmtDate(dv.pairedAt)}</td>
+          <td><button class="unlink" data-pid="${dv.patientId}">ยกเลิก</button></td>
+        </tr>`).join('')
+      : `<tr><td colspan="4" style="color:var(--ink-dim); text-align:center; padding:16px;">ยังไม่มีอุปกรณ์ที่ผูก</td></tr>`;
+
+    $('deviceList').querySelectorAll('.unlink').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('ยกเลิกการผูกอุปกรณ์นี้?')) return;
+        const res = await fetch('/api/devices/' + encodeURIComponent(btn.dataset.pid), {
+          method:'DELETE', credentials:'include',
+        });
+        const data = await res.json();
+        if (!res.ok){ alert(data.error || 'ยกเลิกไม่สำเร็จ'); return; }
+        await loadAll();
+      });
+    });
+  }
+
+  $('pairBtn').addEventListener('click', async () => {
+    $('pairError').style.display = 'none';
+    const patientId = $('patientSelect').value;
+    const deviceId = $('deviceIdInput').value.trim();
+    if (!patientId){ showError('กรุณาเลือกคนไข้'); return; }
+    if (!deviceId){ showError('กรุณากรอกหมายเลขอุปกรณ์'); return; }
+
+    $('pairBtn').disabled = true;
+    $('pairBtn').textContent = 'กำลังผูก...';
+    try {
+      const res = await fetch('/api/devices/pair', {
+        method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include',
+        body: JSON.stringify({ patientId, deviceId }),
+      });
+      const data = await res.json();
+      if (!res.ok){ showError(data.error || 'ผูกอุปกรณ์ไม่สำเร็จ'); return; }
+
+      $('deviceIdInput').value = '';
+      await loadAll();
+    } catch (err) {
+      showError('เชื่อมต่อ server ไม่ได้ กรุณาลองใหม่');
+    } finally {
+      $('pairBtn').disabled = false;
+      $('pairBtn').textContent = 'ผูกอุปกรณ์';
+    }
+  });
+
+  function showError(msg){
+    $('pairError').textContent = msg;
+    $('pairError').style.display = 'block';
+  }
+
+  (async function init(){
+    await checkAuth();
+    await loadAll();
+  })();
+</script>
+</body>
+</html>
