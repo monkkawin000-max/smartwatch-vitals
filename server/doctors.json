@@ -1,0 +1,9 @@
+[
+  {
+    "doctorId": "D001",
+    "name": "พญ. ตัวอย่าง",
+    "active": true,
+    "passwordHash": "$2b$10$fgfIAULm1bxZALt3YrGk8.mMBtBQ4sj7sEVUR2y5ceukaXP3IZbv.",
+    "createdAt": "2026-08-31T09:16:15.435Z"
+  }
+]

@@ -1,0 +1,20 @@
+[
+  {
+    "patientId": "001",
+    "name": "monk",
+    "age": null,
+    "note": "",
+    "createdAt": "2026-08-05T07:22:31.423Z",
+    "active": true,
+    "passwordHash": null
+  },
+  {
+    "patientId": "002",
+    "name": "ทนาย",
+    "age": null,
+    "note": "",
+    "createdAt": "2026-08-05T07:23:50.182Z",
+    "active": true,
+    "passwordHash": null
+  }
+]

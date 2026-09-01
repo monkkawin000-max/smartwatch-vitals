@@ -2,18 +2,37 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const bcrypt = require('bcryptjs');
+const session = require('express-session');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const VITALS_FILE = path.join(__dirname, 'data.json');
 const PATIENTS_FILE = path.join(__dirname, 'patients.json');
 const APPOINTMENTS_FILE = path.join(__dirname, 'appointments.json');
+const DOCTORS_FILE = path.join(__dirname, 'doctors.json');
+const IT_STAFF_FILE = path.join(__dirname, 'it-staff.json');
+const DEVICES_FILE = path.join(__dirname, 'devices.json'); // ← ใหม่: เก็บการผูก Smart Watch กับคนไข้
 
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
+
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || 'smartwatch-vitals-dev-secret-เปลี่ยนก่อน-deploy',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      maxAge: 1000 * 60 * 60 * 8,
+      secure: process.env.NODE_ENV === 'production',
+    },
+  })
+);
+
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// ---------- อ่าน/เขียนไฟล์ (แทนฐานข้อมูลจริง เพื่อความง่ายตอน prototype) ----------
+// ---------- อ่าน/เขียนไฟล์ ----------
 function loadJson(file) {
   if (fs.existsSync(file)) {
     try {
@@ -32,39 +51,202 @@ function saveJson(file, data) {
 let vitalRecords = loadJson(VITALS_FILE);
 let patients = loadJson(PATIENTS_FILE);
 let appointments = loadJson(APPOINTMENTS_FILE);
+let doctors = loadJson(DOCTORS_FILE);
+let itStaff = loadJson(IT_STAFF_FILE);
+let devices = loadJson(DEVICES_FILE); // ← ใหม่: [{ deviceId, patientId, pairedAt }]
 
-// ---------- ทะเบียนคนไข้ ----------
+// ---------- Migration: เติม field ที่ขาดให้ข้อมูลเก่า (เผื่อไฟล์เก่ายังไม่มี active/passwordHash) ----------
+let patientsMigrated = false;
+for (const p of patients) {
+  if (p.active === undefined) { p.active = true; patientsMigrated = true; }
+  if (p.passwordHash === undefined) { p.passwordHash = null; patientsMigrated = true; }
+}
+if (patientsMigrated) saveJson(PATIENTS_FILE, patients);
 
-// GET /api/patients -> รายชื่อคนไข้ทั้งหมดที่ลงทะเบียนไว้
-app.get('/api/patients', (req, res) => {
-  res.json(patients);
+// ---------- Middleware ป้องกัน route ตาม role ----------
+function requireRole(...allowedRoles) {
+  return (req, res, next) => {
+    if (!req.session || !req.session.user) {
+      return res.status(401).json({ error: 'กรุณาเข้าสู่ระบบก่อน' });
+    }
+    if (!allowedRoles.includes(req.session.user.role)) {
+      return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงส่วนนี้' });
+    }
+    next();
+  };
+}
+
+// ---------- Helper: สร้าง ID แบบเดินหน้าเรื่อยๆ ไม่รีไซเคิล ----------
+// นับจาก ID สูงสุดที่เคยมีอยู่ในระบบ (รวมคนที่ปิดบัญชีไปแล้วด้วย) แล้ว +1 เสมอ
+function nextPatientId() {
+  let max = 0;
+  for (const p of patients) {
+    const n = parseInt(p.patientId, 10);
+    if (!isNaN(n) && n > max) max = n;
+  }
+  return String(max + 1).padStart(3, '0'); // "001", "002", ...
+}
+function nextDoctorId() {
+  let max = 0;
+  for (const d of doctors) {
+    const n = parseInt(d.doctorId.replace('D', ''), 10);
+    if (!isNaN(n) && n > max) max = n;
+  }
+  return 'D' + String(max + 1).padStart(3, '0'); // "D001", "D002", ...
+}
+
+// ================== Login / Logout ==================
+
+// POST /api/auth/login/patient -> login ด้วย patientId + password
+app.post('/api/auth/login/patient', async (req, res) => {
+  const { patientId, password } = req.body;
+  if (!patientId || !password) {
+    return res.status(400).json({ error: 'กรุณากรอกรหัสคนไข้และรหัสผ่าน' });
+  }
+  const patient = patients.find((p) => p.patientId === String(patientId));
+  if (!patient || !patient.passwordHash) {
+    return res.status(401).json({ error: 'ไม่พบรหัสคนไข้นี้ หรือยังไม่ได้ตั้งรหัสผ่าน' });
+  }
+  if (!patient.active) {
+    return res.status(403).json({ error: 'บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อเจ้าหน้าที่ IT' });
+  }
+  const isValid = await bcrypt.compare(password, patient.passwordHash);
+  if (!isValid) {
+    return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
+  }
+  req.session.user = { patientId: patient.patientId, name: patient.name, role: 'patient' };
+  res.json({ success: true, user: req.session.user });
 });
 
-// POST /api/patients -> เพิ่มคนไข้ใหม่
-app.post('/api/patients', (req, res) => {
-  const { patientId, name, age, note } = req.body;
-  if (!patientId || !name) {
-    return res.status(400).json({ error: 'กรุณาระบุ patientId และ name' });
+// POST /api/auth/login/doctor -> login ด้วย doctorId (เช่น D001) + password
+app.post('/api/auth/login/doctor', async (req, res) => {
+  const { doctorId, password } = req.body;
+  if (!doctorId || !password) {
+    return res.status(400).json({ error: 'กรุณากรอกรหัสแพทย์และรหัสผ่าน' });
   }
-  if (patients.some((p) => p.patientId === patientId)) {
-    return res.status(409).json({ error: 'มี patientId นี้ในระบบแล้ว' });
+  const doctor = doctors.find((d) => d.doctorId === String(doctorId).toUpperCase());
+  if (!doctor) {
+    return res.status(401).json({ error: 'ไม่พบรหัสแพทย์นี้' });
   }
+  if (!doctor.active) {
+    return res.status(403).json({ error: 'บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อเจ้าหน้าที่ IT' });
+  }
+  const isValid = await bcrypt.compare(password, doctor.passwordHash);
+  if (!isValid) {
+    return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
+  }
+  req.session.user = { doctorId: doctor.doctorId, name: doctor.name, role: 'doctor' };
+  res.json({ success: true, user: req.session.user });
+});
 
+// POST /api/auth/login/it -> login ด้วย username + password (ยังคงเป็น manual/seed เท่านั้น)
+app.post('/api/auth/login/it', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'กรุณากรอก username และรหัสผ่าน' });
+  }
+  const staff = itStaff.find((s) => s.username === username);
+  if (!staff) {
+    return res.status(401).json({ error: 'ไม่พบผู้ใช้นี้' });
+  }
+  const isValid = await bcrypt.compare(password, staff.passwordHash);
+  if (!isValid) {
+    return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
+  }
+  req.session.user = { username: staff.username, name: staff.name, role: 'it' };
+  res.json({ success: true, user: req.session.user });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) return res.status(500).json({ error: 'ออกจากระบบไม่สำเร็จ' });
+    res.clearCookie('connect.sid');
+    res.json({ success: true });
+  });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  if (req.session && req.session.user) {
+    return res.json({ loggedIn: true, user: req.session.user });
+  }
+  res.json({ loggedIn: false });
+});
+
+// POST /api/auth/set-password -> IT ตั้ง/รีเซ็ตรหัสผ่านให้คนไข้หรือหมอ
+// body: { role: 'patient'|'doctor', id: patientId หรือ doctorId, newPassword }
+app.post('/api/auth/set-password', requireRole('it'), async (req, res) => {
+  const { role, id, newPassword } = req.body;
+  if (!role || !id || !newPassword) {
+    return res.status(400).json({ error: 'กรุณาระบุ role, id และรหัสผ่านใหม่' });
+  }
+  const hash = await bcrypt.hash(newPassword, 10);
+
+  if (role === 'patient') {
+    const patient = patients.find((p) => p.patientId === String(id));
+    if (!patient) return res.status(404).json({ error: 'ไม่พบคนไข้รายนี้' });
+    patient.passwordHash = hash;
+    saveJson(PATIENTS_FILE, patients);
+    return res.json({ success: true });
+  }
+  if (role === 'doctor') {
+    const doctor = doctors.find((d) => d.doctorId === String(id));
+    if (!doctor) return res.status(404).json({ error: 'ไม่พบแพทย์รายนี้' });
+    doctor.passwordHash = hash;
+    saveJson(DOCTORS_FILE, doctors);
+    return res.json({ success: true });
+  }
+  return res.status(400).json({ error: 'role ต้องเป็น patient หรือ doctor' });
+});
+
+// ================== ทะเบียนคนไข้ ==================
+
+// GET /api/patients -> คนไข้ทั้งหมด (รวมที่ปิดบัญชีไปแล้ว) ไม่ส่ง passwordHash กลับ
+app.get('/api/patients', (req, res) => {
+  res.json(patients.map((p) => ({ ...p, passwordHash: undefined })));
+});
+
+// POST /api/patients -> เพิ่มคนไข้ใหม่ (ระบบออก patientId ให้อัตโนมัติ ไม่รับจากผู้ใช้)
+app.post('/api/patients', async (req, res) => {
+  const { name, age, note, password } = req.body;
+  if (!name) {
+    return res.status(400).json({ error: 'กรุณาระบุชื่อคนไข้' });
+  }
+  const patientId = nextPatientId();
   const patient = {
-    patientId: String(patientId),
+    patientId,
     name: String(name),
     age: age ? Number(age) : null,
     note: note || '',
+    active: true,
+    passwordHash: password ? await bcrypt.hash(password, 10) : null,
     createdAt: new Date().toISOString(),
   };
   patients.push(patient);
   saveJson(PATIENTS_FILE, patients);
 
   console.log(`[PATIENT] เพิ่มคนไข้ใหม่: ${patient.patientId} — ${patient.name}`);
-  res.status(201).json({ success: true, patient });
+  res.status(201).json({ success: true, patient: { ...patient, passwordHash: undefined } });
 });
 
-// DELETE /api/patients/:patientId -> ลบคนไข้ออกจากทะเบียน (ไม่ลบประวัติ vitals เก่า)
+// PATCH /api/patients/:patientId/deactivate -> ปิดบัญชี (soft-delete) แทนการลบจริง
+app.patch('/api/patients/:patientId/deactivate', requireRole('it'), (req, res) => {
+  const patient = patients.find((p) => p.patientId === req.params.patientId);
+  if (!patient) return res.status(404).json({ error: 'ไม่พบคนไข้รายนี้' });
+  patient.active = false;
+  saveJson(PATIENTS_FILE, patients);
+  res.json({ success: true });
+});
+
+// PATCH /api/patients/:patientId/reactivate -> เปิดบัญชีคืน (ใช้ patientId เดิม)
+app.patch('/api/patients/:patientId/reactivate', requireRole('it'), (req, res) => {
+  const patient = patients.find((p) => p.patientId === req.params.patientId);
+  if (!patient) return res.status(404).json({ error: 'ไม่พบคนไข้รายนี้' });
+  patient.active = true;
+  saveJson(PATIENTS_FILE, patients);
+  res.json({ success: true });
+});
+
+// DELETE /api/patients/:patientId -> ลบออกจากทะเบียนจริง (เก็บไว้เผื่อกรณีฉุกเฉิน ปกติไม่ใช้จากหน้า IT แล้ว ใช้ deactivate แทน)
 app.delete('/api/patients/:patientId', (req, res) => {
   const before = patients.length;
   patients = patients.filter((p) => p.patientId !== req.params.patientId);
@@ -75,9 +257,104 @@ app.delete('/api/patients/:patientId', (req, res) => {
   res.json({ success: true });
 });
 
+// ================== ทะเบียนแพทย์ (ใหม่ทั้งหมด) ==================
+
+// GET /api/doctors -> แพทย์ทั้งหมด (รวมที่ปิดบัญชีไปแล้ว) ไม่ส่ง passwordHash กลับ
+app.get('/api/doctors', (req, res) => {
+  res.json(doctors.map((d) => ({ ...d, passwordHash: undefined })));
+});
+
+// POST /api/doctors -> เพิ่มแพทย์ใหม่ (ระบบออก doctorId ให้อัตโนมัติ เช่น D001)
+app.post('/api/doctors', requireRole('it'), async (req, res) => {
+  const { name, password } = req.body;
+  if (!name || !password) {
+    return res.status(400).json({ error: 'กรุณาระบุชื่อแพทย์และรหัสผ่านเริ่มต้น' });
+  }
+  const doctorId = nextDoctorId();
+  const doctor = {
+    doctorId,
+    name: String(name),
+    active: true,
+    passwordHash: await bcrypt.hash(password, 10),
+    createdAt: new Date().toISOString(),
+  };
+  doctors.push(doctor);
+  saveJson(DOCTORS_FILE, doctors);
+
+  console.log(`[DOCTOR] เพิ่มแพทย์ใหม่: ${doctor.doctorId} — ${doctor.name}`);
+  res.status(201).json({ success: true, doctor: { ...doctor, passwordHash: undefined } });
+});
+
+// PATCH /api/doctors/:doctorId/deactivate
+app.patch('/api/doctors/:doctorId/deactivate', requireRole('it'), (req, res) => {
+  const doctor = doctors.find((d) => d.doctorId === req.params.doctorId);
+  if (!doctor) return res.status(404).json({ error: 'ไม่พบแพทย์รายนี้' });
+  doctor.active = false;
+  saveJson(DOCTORS_FILE, doctors);
+  res.json({ success: true });
+});
+
+// PATCH /api/doctors/:doctorId/reactivate
+app.patch('/api/doctors/:doctorId/reactivate', requireRole('it'), (req, res) => {
+  const doctor = doctors.find((d) => d.doctorId === req.params.doctorId);
+  if (!doctor) return res.status(404).json({ error: 'ไม่พบแพทย์รายนี้' });
+  doctor.active = true;
+  saveJson(DOCTORS_FILE, doctors);
+  res.json({ success: true });
+});
+
+// ================== Device Pairing (ใหม่ทั้งหมด) ==================
+// mock: Device ID เป็นข้อความที่พิมพ์มือ ยังไม่ได้เชื่อม Bluetooth จริง
+
+// GET /api/devices -> อุปกรณ์ที่ผูกอยู่ทั้งหมด พร้อมชื่อคนไข้
+app.get('/api/devices', (req, res) => {
+  const result = devices.map((dv) => {
+    const patient = patients.find((p) => p.patientId === dv.patientId);
+    return { ...dv, patientName: patient ? patient.name : dv.patientId };
+  });
+  res.json(result);
+});
+
+// POST /api/devices/pair -> ผูกอุปกรณ์กับคนไข้ (body: { patientId, deviceId })
+app.post('/api/devices/pair', requireRole('it'), (req, res) => {
+  const { patientId, deviceId } = req.body;
+  if (!patientId || !deviceId) {
+    return res.status(400).json({ error: 'กรุณาระบุคนไข้และหมายเลขอุปกรณ์' });
+  }
+  const patient = patients.find((p) => p.patientId === String(patientId));
+  if (!patient) return res.status(404).json({ error: 'ไม่พบคนไข้รายนี้' });
+  if (!patient.active) return res.status(403).json({ error: 'คนไข้รายนี้ปิดบัญชีอยู่ ไม่สามารถผูกอุปกรณ์ได้' });
+
+  // 1 คนไข้ผูกได้แค่ 1 เครื่อง — ถ้ามีอยู่แล้วต้องยกเลิกก่อน
+  if (devices.some((dv) => dv.patientId === String(patientId))) {
+    return res.status(409).json({ error: 'คนไข้รายนี้มีอุปกรณ์ผูกอยู่แล้ว กรุณายกเลิกอุปกรณ์เดิมก่อน' });
+  }
+  // เครื่องนี้ต้องไม่ถูกผูกกับคนอื่นอยู่แล้ว
+  if (devices.some((dv) => dv.deviceId === String(deviceId))) {
+    return res.status(409).json({ error: 'หมายเลขอุปกรณ์นี้ถูกผูกกับคนไข้รายอื่นอยู่แล้ว' });
+  }
+
+  const record = { deviceId: String(deviceId), patientId: String(patientId), pairedAt: new Date().toISOString() };
+  devices.push(record);
+  saveJson(DEVICES_FILE, devices);
+
+  console.log(`[DEVICE] ผูกอุปกรณ์ ${record.deviceId} กับคนไข้ ${record.patientId}`);
+  res.status(201).json({ success: true, device: record });
+});
+
+// DELETE /api/devices/:patientId -> ยกเลิกการผูกอุปกรณ์ของคนไข้รายนี้
+app.delete('/api/devices/:patientId', requireRole('it'), (req, res) => {
+  const before = devices.length;
+  devices = devices.filter((dv) => dv.patientId !== req.params.patientId);
+  if (devices.length === before) {
+    return res.status(404).json({ error: 'คนไข้รายนี้ไม่มีอุปกรณ์ผูกอยู่' });
+  }
+  saveJson(DEVICES_FILE, devices);
+  res.json({ success: true });
+});
+
 // ---------- Vital Signs ----------
 
-// POST /api/vitals — endpoint ที่ "นาฬิกา" (หรือ Emulator) ยิงเข้ามาตอนซิงค์ข้อมูล
 app.post('/api/vitals', (req, res) => {
   const { patientId, patientName, heartRate, systolic, diastolic, spo2, temperature } = req.body;
 
@@ -85,13 +362,14 @@ app.post('/api/vitals', (req, res) => {
     return res.status(400).json({ error: 'กรุณาระบุ patientId' });
   }
 
-  // ถ้าคนไข้รายนี้ยังไม่เคยลงทะเบียนไว้ ให้ลงทะเบียนอัตโนมัติจากชื่อที่ส่งมา (กันเคส sync ตรงโดยไม่ผ่านฟอร์มเพิ่มคนไข้)
   if (!patients.some((p) => p.patientId === patientId)) {
     patients.push({
       patientId: String(patientId),
       name: patientName || patientId,
       age: null,
       note: '',
+      active: true,
+      passwordHash: null,
       createdAt: new Date().toISOString(),
     });
     saveJson(PATIENTS_FILE, patients);
@@ -110,7 +388,7 @@ app.post('/api/vitals', (req, res) => {
   };
 
   vitalRecords.unshift(record);
-  if (vitalRecords.length > 3000) vitalRecords = vitalRecords.slice(0, 3000); // กันไฟล์บวม
+  if (vitalRecords.length > 3000) vitalRecords = vitalRecords.slice(0, 3000);
 
   saveJson(VITALS_FILE, vitalRecords);
 
@@ -118,18 +396,15 @@ app.post('/api/vitals', (req, res) => {
   res.status(201).json({ success: true, record });
 });
 
-// GET /api/vitals -> ทุก record (ล่าสุดก่อน)
 app.get('/api/vitals', (req, res) => {
   res.json(vitalRecords);
 });
 
-// GET /api/vitals/:patientId -> ประวัติของคนไข้รายเดียว
 app.get('/api/vitals/:patientId', (req, res) => {
   const records = vitalRecords.filter((r) => r.patientId === req.params.patientId);
   res.json(records);
 });
 
-// GET /api/patients/latest -> คนไข้ทุกคนที่ลงทะเบียนไว้ พร้อมค่าล่าสุด (ถ้ามี)
 app.get('/api/patients/latest', (req, res) => {
   const latestByPatient = {};
   for (const r of vitalRecords) {
@@ -158,8 +433,6 @@ app.get('/api/patients/latest', (req, res) => {
 
 // ---------- นัดหมาย (Appointments) ----------
 
-// GET /api/appointments -> นัดหมายทั้งหมด เรียงตามวัน-เวลา
-//   รองรับ query filter: ?date=YYYY-MM-DD หรือ ?patientId=xxx
 app.get('/api/appointments', (req, res) => {
   let result = appointments;
   if (req.query.date) result = result.filter((a) => a.date === req.query.date);
@@ -168,7 +441,6 @@ app.get('/api/appointments', (req, res) => {
   res.json(result);
 });
 
-// POST /api/appointments -> เพิ่มนัดหมายใหม่
 app.post('/api/appointments', (req, res) => {
   const { patientId, date, time, note } = req.body;
   if (!patientId || !date || !time) {
@@ -183,8 +455,8 @@ app.post('/api/appointments', (req, res) => {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
     patientId,
     patientName: patient.name,
-    date,   // เก็บเป็น "YYYY-MM-DD"
-    time,   // เก็บเป็น "HH:MM"
+    date,
+    time,
     note: note || '',
     createdAt: new Date().toISOString(),
   };
@@ -195,7 +467,6 @@ app.post('/api/appointments', (req, res) => {
   res.status(201).json({ success: true, appointment: appt });
 });
 
-// DELETE /api/appointments/:id -> ยกเลิกนัดหมาย
 app.delete('/api/appointments/:id', (req, res) => {
   const before = appointments.length;
   appointments = appointments.filter((a) => a.id !== req.params.id);
