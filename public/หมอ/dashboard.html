@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Doctor Dashboard — Mockup</title>
+<title>Doctor Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
   :root{
@@ -22,12 +22,9 @@
   .tabs{ display:flex; gap:4px; flex-wrap:wrap; }
   .tabs a{ text-decoration:none; font-size:12px; padding:7px 12px; border-radius:9px; color:var(--ink-dim); white-space:nowrap; }
   .tabs a.active{ background:var(--teal-soft); color:var(--teal-deep); font-weight:700; }
-  .logout{ font-size:12px; color:var(--danger); text-decoration:none; }
+  .logout{ font-size:12px; color:var(--danger); text-decoration:none; cursor:pointer; }
 
-  .badge-wrap{ max-width:1100px; margin:14px auto 0; padding:0 20px; }
-  .badge{ display:inline-block; font-size:10px; color:var(--teal-deep); background:var(--teal-soft); border-radius:8px; padding:4px 10px; }
-
-  .top{ max-width:1100px; margin:10px auto 18px; padding:0 20px; }
+  .top{ max-width:1100px; margin:14px auto 18px; padding:0 20px; }
   h1{ font-size:22px; margin:0 0 4px; }
   p.sub{ color:var(--ink-dim); font-size:13px; margin:0; }
 
@@ -44,7 +41,9 @@
   .p-mini div{ text-align:center; }
   .p-mini .v{ font-family:var(--mono); font-size:13px; font-weight:700; }
   .p-mini .l{ font-size:9px; color:var(--ink-dim); text-transform:uppercase; }
+  .p-mini .v.abn{ color: var(--danger); }
   .p-card .time{ margin-top:8px; font-size:10.5px; color:var(--ink-dim); }
+  .empty-list{ text-align:center; color:var(--ink-dim); font-size:13px; padding:30px 10px; background:var(--card); border-radius:14px; border:1px solid var(--line); }
 
   .detail{ display:flex; flex-direction:column; gap:16px; }
   .headline{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px 22px; }
@@ -54,6 +53,7 @@
   .stat{ background:var(--teal-soft); border-radius:12px; padding:10px 12px; }
   .stat .l{ font-size:10px; text-transform:uppercase; color:var(--teal-deep); }
   .stat .v{ font-family:var(--mono); font-size:20px; font-weight:700; color:var(--ink); }
+  .stat .v.abn{ color: var(--danger); }
   .stat .u{ font-size:10px; color:var(--ink-dim); margin-left:2px; }
 
   .chart-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
@@ -61,21 +61,20 @@
   .chart-card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px 18px 8px; }
   .chart-card h3{ font-size:12px; text-transform:uppercase; color:var(--ink-dim); margin:0 0 8px; }
   .chart-card canvas{ max-height:170px; }
+  .no-data{ text-align:center; color:var(--ink-dim); font-size:13px; padding: 60px 20px; background:var(--card); border:1px solid var(--line); border-radius:16px; }
 </style>
 </head>
 <body>
 
   <div class="nav">
-    <div class="who">นพ. สมศักดิ์ <span>dr.somsak</span></div>
+    <div class="who" id="whoBox">... <span>...</span></div>
     <div class="tabs">
       <a href="dashboard.html" class="active">Dashboard</a>
       <a href="calendar.html">ปฏิทิน</a>
-      <a href="device-pairing.html">ลงทะเบียนอุปกรณ์</a>
       <a href="report.html">รายงาน</a>
     </div>
-    <a class="logout" href="login.html">ออกจากระบบ</a>
+    <a class="logout" id="logoutLink">ออกจากระบบ</a>
   </div>
-  <div class="badge-wrap"><span class="badge">MOCKUP — ข้อมูลตัวอย่าง ยังไม่เชื่อมระบบจริง</span></div>
 
   <div class="top">
     <h1>Doctor Dashboard</h1>
@@ -84,7 +83,7 @@
 
   <div class="wrap">
     <div class="patient-list" id="patientList"></div>
-    <div class="detail">
+    <div class="detail" id="detail" style="display:none;">
       <div class="headline">
         <div class="pid" id="dPid">—</div>
         <div class="name" id="dName">—</div>
@@ -95,85 +94,160 @@
           <div class="stat"><div class="l">Temp</div><div class="v" id="dTemp">--<span class="u">°C</span></div></div>
         </div>
       </div>
-      <div class="chart-grid">
+      <div class="chart-grid" id="chartGrid">
         <div class="chart-card"><h3>Heart Rate (bpm)</h3><canvas id="chartHR"></canvas></div>
         <div class="chart-card"><h3>Blood Pressure (mmHg)</h3><canvas id="chartBP"></canvas></div>
         <div class="chart-card"><h3>SpO2 (%)</h3><canvas id="chartSpo2"></canvas></div>
         <div class="chart-card"><h3>Temperature (°C)</h3><canvas id="chartTemp"></canvas></div>
       </div>
+      <div class="no-data" id="noDataMsg" style="display:none;">คนไข้รายนี้ยังไม่มีข้อมูล Vital Signs เข้ามา</div>
     </div>
   </div>
 
 <script>
-  // ---------- ข้อมูล demo คงที่ (ไม่ต่อ backend จริง) ----------
-  const labels = ['08:00','12:00','16:00','20:00','00:00','04:00'];
-  const patients = {
-    '001': {
-      patientId:'001', name:'monk', hr:[74,78,82,79,75,76], sys:[118,120,122,119,117,118], dia:[76,78,80,77,75,76],
-      spo2:[98,98,97,98,99,98], temp:[36.6,36.8,36.9,36.7,36.6,36.7],
-    },
-    '002': {
-      patientId:'002', name:'ทนาย', hr:[80,85,88,86,82,81], sys:[124,128,130,126,123,124], dia:[80,82,84,81,79,80],
-      spo2:[97,96,97,97,98,97], temp:[36.9,37.0,37.2,37.0,36.9,36.9],
-    },
-  };
-  let selected = '001';
+  const $ = (id) => document.getElementById(id);
+  let selectedPatientId = null;
   let charts = {};
 
-  function last(arr){ return arr[arr.length-1]; }
+  async function checkAuth(){
+    const res = await fetch('/api/auth/me', { credentials:'include' });
+    const data = await res.json();
+    if (!data.loggedIn || data.user.role !== 'doctor'){
+      window.location.href = 'login.html';
+      return;
+    }
+    $('whoBox').innerHTML = `${data.user.name} <span>${data.user.doctorId}</span>`;
+  }
+  $('logoutLink').addEventListener('click', async () => {
+    await fetch('/api/auth/logout', { method:'POST', credentials:'include' });
+    window.location.href = 'login.html';
+  });
 
-  function renderList(){
-    document.getElementById('patientList').innerHTML = Object.values(patients).map(p => `
-      <div class="p-card ${p.patientId===selected?'active':''}" data-pid="${p.patientId}">
-        <div class="pid">${p.patientId}</div>
-        <div class="name">${p.name}</div>
+  function isAbnormal(field, r){
+    if (!r.hasData) return false;
+    if (field === 'hr') return r.heartRate < 50 || r.heartRate > 120;
+    if (field === 'sys') return r.systolic > 160 || r.systolic < 90;
+    if (field === 'spo2') return r.spo2 < 92;
+    if (field === 'temp') return r.temperature > 38.5;
+    return false;
+  }
+
+  async function loadPatientList(){
+    const res = await fetch('/api/patients/latest', { credentials:'include' });
+    const data = await res.json();
+
+    if (!data.length){
+      $('patientList').innerHTML = '<div class="empty-list">ยังไม่มีคนไข้ในระบบ</div>';
+      $('detail').style.display = 'none';
+      return;
+    }
+
+    if (!selectedPatientId) selectedPatientId = data[0].patientId;
+
+    $('patientList').innerHTML = data.map(r => `
+      <div class="p-card ${r.patientId === selectedPatientId ? 'active' : ''}" data-pid="${r.patientId}">
+        <div class="pid">${r.patientId}</div>
+        <div class="name">${r.patientName}</div>
+        ${r.hasData ? `
         <div class="p-mini">
-          <div><div class="v">${last(p.hr)}</div><div class="l">HR</div></div>
-          <div><div class="v">${last(p.sys)}/${last(p.dia)}</div><div class="l">BP</div></div>
-          <div><div class="v">${last(p.spo2)}%</div><div class="l">SpO2</div></div>
-          <div><div class="v">${last(p.temp)}°</div><div class="l">Temp</div></div>
+          <div><div class="v ${isAbnormal('hr',r)?'abn':''}">${r.heartRate}</div><div class="l">HR</div></div>
+          <div><div class="v ${isAbnormal('sys',r)?'abn':''}">${r.systolic}/${r.diastolic}</div><div class="l">BP</div></div>
+          <div><div class="v ${isAbnormal('spo2',r)?'abn':''}">${r.spo2}%</div><div class="l">SpO2</div></div>
+          <div><div class="v ${isAbnormal('temp',r)?'abn':''}">${r.temperature}°</div><div class="l">Temp</div></div>
         </div>
-        <div class="time">ซิงค์ล่าสุด: วันนี้ 04:00 น.</div>
+        <div class="time">${new Date(r.timestamp).toLocaleString('th-TH')}</div>
+        ` : `<div class="time">ยังไม่มีข้อมูล Vital Signs</div>`}
       </div>
     `).join('');
-    document.querySelectorAll('.p-card').forEach(el => {
-      el.addEventListener('click', () => { selected = el.dataset.pid; renderList(); renderDetail(); });
+
+    $('patientList').querySelectorAll('.p-card').forEach(el => {
+      el.addEventListener('click', () => { selectedPatientId = el.dataset.pid; loadPatientList(); loadDetail(); });
     });
+
+    $('detail').style.display = 'flex';
   }
 
-  function makeChart(ctx, color){
+  function makeChart(ctx, label, color){
     return new Chart(ctx, {
-      type:'line',
-      data:{ labels, datasets:[{ data:[], borderColor:color, backgroundColor:color+'22', tension:.35, pointRadius:2, fill:true, borderWidth:2 }] },
-      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
-        scales:{ x:{ticks:{font:{size:9}},grid:{display:false}}, y:{ticks:{font:{size:9}},grid:{color:'#EEF3F2'}} } }
+      type: 'line',
+      data: { labels: [], datasets: [{
+        label, data: [], borderColor: color, backgroundColor: color + '22',
+        tension: 0.35, pointRadius: 2, fill: true, borderWidth: 2,
+      }]},
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display:false } },
+        scales: {
+          x: { ticks: { font: { size: 9 } }, grid: { display:false } },
+          y: { ticks: { font: { size: 9 } }, grid: { color: '#EEF3F2' } },
+        },
+      }
     });
   }
 
-  function renderDetail(){
-    const p = patients[selected];
-    document.getElementById('dPid').textContent = p.patientId;
-    document.getElementById('dName').textContent = p.name;
-    document.getElementById('dHR').innerHTML = last(p.hr)+'<span class="u">bpm</span>';
-    document.getElementById('dBP').innerHTML = last(p.sys)+'/'+last(p.dia)+'<span class="u">mmHg</span>';
-    document.getElementById('dSpo2').innerHTML = last(p.spo2)+'<span class="u">%</span>';
-    document.getElementById('dTemp').innerHTML = last(p.temp)+'<span class="u">°C</span>';
-
-    if (!charts.hr){
-      charts.hr = makeChart(document.getElementById('chartHR'), '#0E7C86');
-      charts.sys = makeChart(document.getElementById('chartBP'), '#0E7C86');
-      charts.sys.data.datasets.push({ data:[], borderColor:'#E8A33D', backgroundColor:'#E8A33D22', tension:.35, pointRadius:2, fill:true, borderWidth:2 });
-      charts.spo2 = makeChart(document.getElementById('chartSpo2'), '#3FA796');
-      charts.temp = makeChart(document.getElementById('chartTemp'), '#E8A33D');
-    }
-    charts.hr.data.datasets[0].data = p.hr; charts.hr.update();
-    charts.sys.data.datasets[0].data = p.sys; charts.sys.data.datasets[1].data = p.dia; charts.sys.update();
-    charts.spo2.data.datasets[0].data = p.spo2; charts.spo2.update();
-    charts.temp.data.datasets[0].data = p.temp; charts.temp.update();
+  function ensureCharts(){
+    if (charts.hr) return;
+    charts.hr   = makeChart($('chartHR'),   'HR',  '#0E7C86');
+    charts.sys  = makeChart($('chartBP'),   'Sys', '#0E7C86');
+    charts.spo2 = makeChart($('chartSpo2'), 'SpO2','#3FA796');
+    charts.temp = makeChart($('chartTemp'), 'Temp','#E8A33D');
+    charts.sys.data.datasets.push({
+      label: 'Dia', data: [], borderColor: '#E8A33D', backgroundColor: '#E8A33D22',
+      tension: 0.35, pointRadius: 2, fill: true, borderWidth: 2,
+    });
   }
 
-  renderList();
-  renderDetail();
+  async function loadDetail(){
+    if (!selectedPatientId) return;
+    const res = await fetch('/api/vitals/' + encodeURIComponent(selectedPatientId), { credentials:'include' });
+    let records = await res.json();
+
+    if (!records.length){
+      $('chartGrid').style.display = 'none';
+      $('noDataMsg').style.display = 'block';
+      $('dPid').textContent = selectedPatientId;
+      const patients = await (await fetch('/api/patients', { credentials:'include' })).json();
+      const p = patients.find(x => x.patientId === selectedPatientId);
+      $('dName').textContent = p ? p.name : selectedPatientId;
+      ['dHR','dBP','dSpo2','dTemp'].forEach(id => $(id).textContent = '--');
+      return;
+    }
+    $('chartGrid').style.display = '';
+    $('noDataMsg').style.display = 'none';
+
+    records = records.slice(0, 20).reverse();
+    const latest = records[records.length - 1];
+
+    $('dPid').textContent = latest.patientId;
+    $('dName').textContent = latest.patientName;
+    $('dHR').innerHTML = latest.heartRate + '<span class="u">bpm</span>';
+    $('dHR').className = 'v' + (isAbnormal('hr',latest)?' abn':'');
+    $('dBP').innerHTML = latest.systolic + '/' + latest.diastolic + '<span class="u">mmHg</span>';
+    $('dBP').className = 'v' + (isAbnormal('sys',latest)?' abn':'');
+    $('dSpo2').innerHTML = latest.spo2 + '<span class="u">%</span>';
+    $('dSpo2').className = 'v' + (isAbnormal('spo2',latest)?' abn':'');
+    $('dTemp').innerHTML = latest.temperature + '<span class="u">°C</span>';
+    $('dTemp').className = 'v' + (isAbnormal('temp',latest)?' abn':'');
+
+    ensureCharts();
+    const labels = records.map(r => new Date(r.timestamp).toLocaleTimeString('th-TH', { hour12:false }));
+
+    charts.hr.data.labels = labels; charts.hr.data.datasets[0].data = records.map(r => r.heartRate); charts.hr.update();
+    charts.sys.data.labels = labels; charts.sys.data.datasets[0].data = records.map(r => r.systolic); charts.sys.data.datasets[1].data = records.map(r => r.diastolic); charts.sys.update();
+    charts.spo2.data.labels = labels; charts.spo2.data.datasets[0].data = records.map(r => r.spo2); charts.spo2.update();
+    charts.temp.data.labels = labels; charts.temp.data.datasets[0].data = records.map(r => r.temperature); charts.temp.update();
+  }
+
+  async function tick(){
+    await loadPatientList();
+    await loadDetail();
+  }
+
+  (async function init(){
+    await checkAuth();
+    tick();
+    setInterval(tick, 5000);
+  })();
 </script>
 </body>
 </html>
