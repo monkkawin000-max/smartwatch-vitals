@@ -82,6 +82,7 @@
 <script>
   const $ = (id) => document.getElementById(id);
   let myPatientId = null;
+  let hrChart = null; // เก็บ instance ของกราฟไว้ กันสร้างซ้ำตอน auto-refresh
 
   async function checkAuth(){
     const res = await fetch('/api/auth/me', { credentials:'include' });
@@ -143,30 +144,41 @@
       <div class="stat ${isAbnormal('temp',latest)?'abn':'ok'}"><div class="l">Temperature</div><div class="v">${latest.temperature}<span class="u">°C</span></div></div>`;
 
     const recent = [...records].slice(0, 20).reverse(); // เก่า -> ใหม่ สำหรับกราฟ
-    new Chart($('chartHR'), {
-      type: 'line',
-      data: {
-        labels: recent.map(r => new Date(r.timestamp).toLocaleTimeString('th-TH', { hour12:false })),
-        datasets: [{
-          data: recent.map(r => r.heartRate),
-          borderColor: '#0E7C86', backgroundColor: '#0E7C8622',
-          tension: 0.35, pointRadius: 3, fill: true, borderWidth: 2,
-        }]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display:false } },
-        scales: {
-          x: { ticks: { font: { size: 9 } }, grid: { display:false } },
-          y: { ticks: { font: { size: 10 } }, grid: { color: '#EEF3F2' } },
+    const labels = recent.map(r => new Date(r.timestamp).toLocaleTimeString('th-TH', { hour12:false }));
+    const values = recent.map(r => r.heartRate);
+
+    if (hrChart){
+      // มีกราฟอยู่แล้ว แค่อัปเดตข้อมูล ไม่สร้างใหม่ซ้ำ (กันกราฟซ้อนตอน auto-refresh ทุก 5 วิ)
+      hrChart.data.labels = labels;
+      hrChart.data.datasets[0].data = values;
+      hrChart.update();
+    } else {
+      hrChart = new Chart($('chartHR'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            data: values,
+            borderColor: '#0E7C86', backgroundColor: '#0E7C8622',
+            tension: 0.35, pointRadius: 3, fill: true, borderWidth: 2,
+          }]
         },
-      }
-    });
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display:false } },
+          scales: {
+            x: { ticks: { font: { size: 9 } }, grid: { display:false } },
+            y: { ticks: { font: { size: 10 } }, grid: { color: '#EEF3F2' } },
+          },
+        }
+      });
+    }
   }
 
   (async function init(){
     await checkAuth();
     await loadVitals();
+    setInterval(loadVitals, 5000); // อัปเดตอัตโนมัติทุก 5 วินาที เหมือนหน้า Dashboard ของหมอ
   })();
 </script>
 </body>
