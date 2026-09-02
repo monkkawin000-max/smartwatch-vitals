@@ -409,6 +409,55 @@ app.get('/api/vitals/:patientId', (req, res) => {
   res.json(records);
 });
 
+// GET /api/vitals/stats/:patientId?from=YYYY-MM-DD&to=YYYY-MM-DD
+// สรุปค่าเฉลี่ย Vital Signs ในช่วงวันที่ที่เลือก (ใช้สำหรับหน้ารายงานของหมอ)
+app.get('/api/vitals/stats/:patientId', (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) {
+    return res.status(400).json({ error: 'กรุณาระบุ from และ to (YYYY-MM-DD)' });
+  }
+
+  const records = vitalRecords.filter((r) => {
+    if (r.patientId !== req.params.patientId) return false;
+    const d = r.timestamp.slice(0, 10); // "YYYY-MM-DD"
+    return d >= from && d <= to;
+  });
+
+  if (records.length === 0) {
+    return res.json({ hasData: false, count: 0, summary: null, daily: [] });
+  }
+
+  const avg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const summary = {
+    avgHeartRate: Math.round(avg(records.map((r) => r.heartRate))),
+    avgSystolic: Math.round(avg(records.map((r) => r.systolic))),
+    avgDiastolic: Math.round(avg(records.map((r) => r.diastolic))),
+    avgSpo2: Math.round(avg(records.map((r) => r.spo2))),
+    avgTemperature: Math.round(avg(records.map((r) => r.temperature)) * 10) / 10,
+  };
+
+  // จัดกลุ่มตามวัน แล้วเฉลี่ยของแต่ละวัน เรียงจากเก่าไปใหม่
+  const byDate = {};
+  for (const r of records) {
+    const d = r.timestamp.slice(0, 10);
+    if (!byDate[d]) byDate[d] = [];
+    byDate[d].push(r);
+  }
+  const daily = Object.keys(byDate).sort().map((date) => {
+    const recs = byDate[date];
+    return {
+      date,
+      avgHeartRate: Math.round(avg(recs.map((r) => r.heartRate))),
+      avgSystolic: Math.round(avg(recs.map((r) => r.systolic))),
+      avgDiastolic: Math.round(avg(recs.map((r) => r.diastolic))),
+      avgSpo2: Math.round(avg(recs.map((r) => r.spo2))),
+      avgTemperature: Math.round(avg(recs.map((r) => r.temperature)) * 10) / 10,
+    };
+  });
+
+  res.json({ hasData: true, count: records.length, summary, daily });
+});
+
 app.get('/api/patients/latest', (req, res) => {
   const latestByPatient = {};
   for (const r of vitalRecords) {
