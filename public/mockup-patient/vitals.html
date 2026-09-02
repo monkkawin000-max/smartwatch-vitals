@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Smart Watch ของฉัน — Patient</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#EEF3F2; --card:#FFFFFF; --ink:#17313E; --ink-dim:#5B7280;
+    --teal:#0E7C86; --teal-deep:#0B5E66; --teal-soft:#DCEEEC;
+    --amber:#E8A33D; --danger:#D64545; --line:#DCE6E4;
+    --mono:'JetBrains Mono',Consolas,monospace; --sans:'Space Grotesk','Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); padding-bottom:60px; }
+
+  .nav{ background:var(--card); border-bottom:1px solid var(--line); padding:12px 20px; display:flex;
+        align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+  .nav .who{ font-size:13px; font-weight:700; }
+  .nav .who span{ display:block; font-size:11px; font-weight:400; color:var(--ink-dim); }
+  .tabs{ display:flex; gap:6px; }
+  .tabs a{ text-decoration:none; font-size:12.5px; padding:7px 14px; border-radius:9px; color:var(--ink-dim); }
+  .tabs a.active{ background:var(--teal-soft); color:var(--teal-deep); font-weight:700; }
+  .logout{ font-size:12px; color:var(--danger); text-decoration:none; cursor:pointer; }
+
+  .wrap{ max-width:520px; margin:0 auto; padding:22px 20px 0; }
+  h1{ font-size:19px; margin:0 0 4px; }
+  p.sub{ color:var(--ink-dim); font-size:12.5px; margin:0 0 18px; }
+
+  .stat-row{ display:grid; grid-template-columns: repeat(2,1fr); gap:10px; margin-bottom:18px; }
+  .stat{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; }
+  .stat .l{ font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-dim); margin-bottom:4px; }
+  .stat .v{ font-family:var(--mono); font-size:24px; font-weight:700; }
+  .stat .u{ font-size:11px; color:var(--ink-dim); margin-left:2px; }
+  .stat.ok .v{ color:var(--teal-deep); }
+  .stat.abn .v{ color: var(--danger); }
+
+  .chart-card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px 18px 8px; margin-bottom:16px; }
+  .chart-card h3{ font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-dim); margin:0 0 8px; }
+  .chart-card canvas{ max-height:160px; }
+
+  .info{ font-size:11.5px; color:var(--ink-dim); text-align:center; padding:10px; }
+
+  .empty-box{ text-align:center; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:36px 24px; }
+  .empty-box .icon{ font-size:32px; margin-bottom:10px; }
+  .empty-box .msg{ font-size:14px; font-weight:700; margin-bottom:6px; }
+  .empty-box .hint{ font-size:12.5px; color:var(--ink-dim); }
+</style>
+</head>
+<body>
+
+  <div class="nav">
+    <div class="who" id="whoBox">... <span>...</span></div>
+    <div class="tabs">
+      <a href="vitals.html" class="active">Smart Watch</a>
+      <a href="calendar.html">ปฏิทิน</a>
+    </div>
+    <a class="logout" id="logoutLink">ออกจากระบบ</a>
+  </div>
+
+  <div class="wrap">
+    <h1>ค่าสุขภาพล่าสุดของฉัน</h1>
+    <p class="sub" id="syncSub">กำลังโหลด...</p>
+
+    <div id="emptyBox" class="empty-box" style="display:none;">
+      <div class="icon">⌚</div>
+      <div class="msg" id="emptyMsg">—</div>
+      <div class="hint" id="emptyHint">—</div>
+    </div>
+
+    <div id="dataArea" style="display:none;">
+      <div class="stat-row" id="statRow"></div>
+      <div class="chart-card">
+        <h3>Heart Rate ล่าสุด</h3>
+        <canvas id="chartHR"></canvas>
+      </div>
+      <div class="info">แสดงข้อมูล 20 ครั้งล่าสุดที่นาฬิกาซิงค์เข้ามา</div>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let myPatientId = null;
+
+  async function checkAuth(){
+    const res = await fetch('/api/auth/me', { credentials:'include' });
+    const data = await res.json();
+    if (!data.loggedIn || data.user.role !== 'patient'){
+      window.location.href = 'login.html';
+      return;
+    }
+    myPatientId = data.user.patientId;
+    $('whoBox').innerHTML = `${data.user.name} <span>${data.user.patientId}</span>`;
+  }
+  $('logoutLink').addEventListener('click', async () => {
+    await fetch('/api/auth/logout', { method:'POST', credentials:'include' });
+    window.location.href = 'login.html';
+  });
+
+  function isAbnormal(field, r){
+    if (field === 'hr') return r.heartRate < 50 || r.heartRate > 120;
+    if (field === 'sys') return r.systolic > 160 || r.systolic < 90;
+    if (field === 'spo2') return r.spo2 < 92;
+    if (field === 'temp') return r.temperature > 38.5;
+    return false;
+  }
+
+  async function loadVitals(){
+    const [vitalsRes, devicesRes] = await Promise.all([
+      fetch('/api/vitals/' + encodeURIComponent(myPatientId), { credentials:'include' }),
+      fetch('/api/devices', { credentials:'include' }),
+    ]);
+    const records = await vitalsRes.json();
+    const devices = await devicesRes.json();
+    const hasDevice = devices.some(dv => dv.patientId === myPatientId);
+
+    if (!records.length){
+      $('dataArea').style.display = 'none';
+      $('emptyBox').style.display = 'block';
+      $('syncSub').textContent = '';
+      if (!hasDevice){
+        $('emptyMsg').textContent = 'ยังไม่ได้รับ Smart Watch';
+        $('emptyHint').textContent = 'ติดต่อเจ้าหน้าที่ IT เพื่อรับเครื่องและลงทะเบียนอุปกรณ์';
+      } else {
+        $('emptyMsg').textContent = 'นาฬิกาผูกไว้แล้ว แต่ยังไม่มีข้อมูลซิงค์เข้ามา';
+        $('emptyHint').textContent = 'ลองเปิดนาฬิกาและซิงค์ข้อมูลอีกครั้ง หากยังไม่มีข้อมูลติดต่อเจ้าหน้าที่ IT';
+      }
+      return;
+    }
+
+    $('emptyBox').style.display = 'none';
+    $('dataArea').style.display = 'block';
+
+    const sorted = [...records].sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+    const latest = sorted[0];
+    $('syncSub').textContent = `ซิงค์ล่าสุด: ${new Date(latest.timestamp).toLocaleString('th-TH')}`;
+
+    $('statRow').innerHTML = `
+      <div class="stat ${isAbnormal('hr',latest)?'abn':'ok'}"><div class="l">Heart Rate</div><div class="v">${latest.heartRate}<span class="u">bpm</span></div></div>
+      <div class="stat ${isAbnormal('sys',latest)?'abn':'ok'}"><div class="l">Blood Pressure</div><div class="v">${latest.systolic}/${latest.diastolic}<span class="u">mmHg</span></div></div>
+      <div class="stat ${isAbnormal('spo2',latest)?'abn':'ok'}"><div class="l">SpO2</div><div class="v">${latest.spo2}<span class="u">%</span></div></div>
+      <div class="stat ${isAbnormal('temp',latest)?'abn':'ok'}"><div class="l">Temperature</div><div class="v">${latest.temperature}<span class="u">°C</span></div></div>`;
+
+    const recent = [...records].slice(0, 20).reverse(); // เก่า -> ใหม่ สำหรับกราฟ
+    new Chart($('chartHR'), {
+      type: 'line',
+      data: {
+        labels: recent.map(r => new Date(r.timestamp).toLocaleTimeString('th-TH', { hour12:false })),
+        datasets: [{
+          data: recent.map(r => r.heartRate),
+          borderColor: '#0E7C86', backgroundColor: '#0E7C8622',
+          tension: 0.35, pointRadius: 3, fill: true, borderWidth: 2,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display:false } },
+        scales: {
+          x: { ticks: { font: { size: 9 } }, grid: { display:false } },
+          y: { ticks: { font: { size: 10 } }, grid: { color: '#EEF3F2' } },
+        },
+      }
+    });
+  }
+
+  (async function init(){
+    await checkAuth();
+    await loadVitals();
+  })();
+</script>
+</body>
+</html>
