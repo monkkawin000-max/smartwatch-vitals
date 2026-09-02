@@ -7,6 +7,10 @@ const session = require('express-session');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// สำคัญมากสำหรับ deploy บน Render/Heroku: บอก Express ว่าอยู่หลัง reverse proxy
+// ถ้าไม่มีบรรทัดนี้ session cookie (secure: true) จะทำงานผิดพลาด login แล้ว "หลุด" ทันที
+app.set('trust proxy', 1);
 const VITALS_FILE = path.join(__dirname, 'data.json');
 const PATIENTS_FILE = path.join(__dirname, 'patients.json');
 const APPOINTMENTS_FILE = path.join(__dirname, 'appointments.json');
