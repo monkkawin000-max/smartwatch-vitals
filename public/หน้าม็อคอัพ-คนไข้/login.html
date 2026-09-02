@@ -8,6 +8,7 @@
   :root{
     --bg:#EEF3F2; --card:#FFFFFF; --ink:#17313E; --ink-dim:#5B7280;
     --teal:#0E7C86; --teal-deep:#0B5E66; --teal-soft:#DCEEEC;
+    --danger:#D64545;
     --line:#DCE6E4; --sans:'Space Grotesk','Segoe UI',sans-serif;
   }
   *{box-sizing:border-box;}
@@ -25,9 +26,12 @@
   .btn{ display:block; width:100%; text-align:center; text-decoration:none; border:none; border-radius:12px;
         padding:12px; background:var(--teal); color:#fff; font-weight:700; font-size:14px; cursor:pointer; }
   .btn:hover{ background:var(--teal-deep); }
+  .btn:disabled{ background:#9FB6B4; cursor:not-allowed; }
   .note{ text-align:center; font-size:11px; color:var(--ink-dim); margin-top:16px; }
-  .badge{ display:block; text-align:center; font-size:10px; color:var(--teal-deep); background:var(--teal-soft);
-          border-radius:8px; padding:4px 8px; margin-bottom:18px; }
+  .error-box{
+    display:none; background:#FDECEC; color:var(--danger); border:1px solid #F3C7C7;
+    border-radius:10px; padding:9px 12px; font-size:12.5px; margin-bottom:14px;
+  }
 </style>
 </head>
 <body>
@@ -35,17 +39,63 @@
     <div class="logo"><span>♥</span></div>
     <h1>เข้าสู่ระบบผู้ป่วย</h1>
     <p class="sub">ระบบติดตามสุขภาพหลังการรักษา</p>
-    <div class="badge">MOCKUP — หน้าตัวอย่าง ยังไม่เชื่อมระบบจริง</div>
 
-    <label>รหัสคนไข้ / เบอร์โทรศัพท์</label>
-    <input type="text" value="patient001" readonly />
+    <div class="error-box" id="errorBox"></div>
 
-    <label>รหัสผ่าน</label>
-    <input type="password" value="••••••••" readonly />
+    <form id="loginForm">
+      <label>รหัสคนไข้</label>
+      <input type="text" id="patientId" placeholder="เช่น 001" autocomplete="username" required />
 
-    <a class="btn" href="vitals.html">เข้าสู่ระบบ</a>
+      <label>รหัสผ่าน</label>
+      <input type="password" id="password" placeholder="รหัสผ่าน" autocomplete="current-password" required />
+
+      <button type="submit" class="btn" id="loginBtn">เข้าสู่ระบบ</button>
+    </form>
 
     <div class="note">ลืมรหัสผ่าน? ติดต่อเจ้าหน้าที่โรงพยาบาล</div>
   </div>
+
+<script>
+  const form = document.getElementById('loginForm');
+  const errorBox = document.getElementById('errorBox');
+  const loginBtn = document.getElementById('loginBtn');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errorBox.style.display = 'none';
+
+    const patientId = document.getElementById('patientId').value.trim();
+    const password = document.getElementById('password').value;
+
+    loginBtn.disabled = true;
+    loginBtn.textContent = 'กำลังเข้าสู่ระบบ...';
+
+    try {
+      const res = await fetch('/api/auth/login/patient', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', // สำคัญ: ให้ browser เก็บ session cookie ไว้
+        body: JSON.stringify({ patientId, password }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        errorBox.textContent = data.error || 'เข้าสู่ระบบไม่สำเร็จ';
+        errorBox.style.display = 'block';
+        loginBtn.disabled = false;
+        loginBtn.textContent = 'เข้าสู่ระบบ';
+        return;
+      }
+
+      // login สำเร็จ -> ไปหน้า Smart Watch ของฉัน
+      window.location.href = 'vitals.html';
+    } catch (err) {
+      errorBox.textContent = 'เชื่อมต่อ server ไม่ได้ กรุณาลองใหม่';
+      errorBox.style.display = 'block';
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'เข้าสู่ระบบ';
+    }
+  });
+</script>
 </body>
 </html>
