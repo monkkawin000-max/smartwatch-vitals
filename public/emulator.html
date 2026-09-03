@@ -80,6 +80,7 @@
     font-family: var(--sans); font-size: 13px; background: #FBFDFC; color: var(--ink);
   }
   .two-col{ display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .hint{ font-size: 11px; color: var(--ink-dim); margin: -10px 0 14px; }
 
   .btn{
     border:none; border-radius: 12px; padding: 12px 18px; font-family: var(--sans);
@@ -135,30 +136,14 @@
   <div class="row two-col">
     <div>
       <label>Backend URL</label>
-      <input type="text" id="apiUrl" value="http://localhost:3000/api/vitals" />
+      <input type="text" id="apiUrl" value="/api/vitals" />
     </div>
     <div>
-      <label>คนไข้</label>
-      <select id="patientSelect">
-        <option value="">— กำลังโหลดรายชื่อ... —</option>
-      </select>
+      <label>Device ID</label>
+      <input type="text" id="deviceId" placeholder="เช่น SW-2026-00931" />
     </div>
   </div>
-
-  <div class="row" id="newPatientForm" style="display:none; background:#F6FAF9; border:1px dashed var(--line); border-radius:12px; padding:12px;">
-    <label style="margin-bottom:10px;">เพิ่มคนไข้ใหม่</label>
-    <div class="two-col" style="margin-bottom:10px;">
-      <div>
-        <label>รหัสคนไข้ (Patient ID)</label>
-        <input type="text" id="newPatientId" placeholder="เช่น patient002" />
-      </div>
-      <div>
-        <label>ชื่อ</label>
-        <input type="text" id="newPatientName" placeholder="เช่น สมชาย ใจดี" />
-      </div>
-    </div>
-    <button class="btn btn-primary" id="createPatientBtn" style="width:100%;">สร้างคนไข้ใหม่</button>
-  </div>
+  <div class="hint">ใส่หมายเลขอุปกรณ์ที่ IT ผูกกับคนไข้ไว้แล้วในหน้า "ลงทะเบียนอุปกรณ์" — เหมือนนาฬิกาจริงที่รู้จักแค่หมายเลขตัวเอง ไม่รู้จักคนไข้โดยตรง</div>
 
   <h2>ค่า Vital Signs (ปรับด้วยมือ)</h2>
   <div class="row">
@@ -258,30 +243,31 @@
   [hr, sys, dia, spo2, temp].forEach(el => el.addEventListener('input', refreshDisplay));
   refreshDisplay();
 
-  function addLogEntry(record, ok, errMsg){
+  function addLogEntry(payload, ok, message){
     if (!hasLogged){ logList.innerHTML = ''; hasLogged = true; }
     const div = document.createElement('div');
     div.className = 'log-item';
     const time = new Date().toLocaleTimeString('th-TH', { hour12:false });
-    div.innerHTML = `<span>${time} — HR ${record.heartRate} BP ${record.systolic}/${record.diastolic} SpO2 ${record.spo2}% T ${record.temperature}°C</span>` +
-                     `<span class="${ok ? 'ok' : 'fail'}">${ok ? 'สำเร็จ' : ('ล้มเหลว: ' + errMsg)}</span>`;
+    div.innerHTML = `<span>${time} — HR ${payload.heartRate} BP ${payload.systolic}/${payload.diastolic} SpO2 ${payload.spo2}% T ${payload.temperature}°C</span>` +
+                     `<span class="${ok ? 'ok' : 'fail'}">${message}</span>`;
     logList.prepend(div);
   }
 
   async function sendVitals(){
-    const patientId = $('patientSelect').value;
-    if (!patientId) {
-      addLogEntry({ heartRate:0, systolic:0, diastolic:0, spo2:0, temperature:0 }, false, 'ยังไม่ได้เลือกคนไข้');
-      return;
-    }
-    const record = {
-      patientId,
+    const deviceId = $('deviceId').value.trim();
+    const payload = {
+      deviceId,
       heartRate: Number(hr.value),
       systolic: Number(sys.value),
       diastolic: Number(dia.value),
       spo2: Number(spo2.value),
       temperature: Number(Number(temp.value).toFixed(1)),
     };
+
+    if (!deviceId){
+      addLogEntry(payload, false, 'ล้มเหลว: กรุณากรอกหมายเลขอุปกรณ์ (Device ID)');
+      return;
+    }
 
     syncDot.classList.add('syncing');
     syncLabel.textContent = 'syncing…';
@@ -291,13 +277,20 @@
       const res = await fetch($('apiUrl').value, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(record),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      addLogEntry(record, true);
-      $('lastSync').textContent = new Date().toLocaleTimeString('th-TH', { hour12:false });
+      const data = await res.json();
+
+      if (!res.ok){
+        // ใช้ข้อความ error จาก server ตรงๆ (เช่น "อุปกรณ์นี้ยังไม่ได้ลงทะเบียนกับคนไข้รายใด")
+        addLogEntry(payload, false, 'ล้มเหลว: ' + (data.error || ('HTTP ' + res.status)));
+      } else {
+        // server ตอบกลับมาว่าอุปกรณ์นี้ผูกกับคนไข้คนไหน โชว์ไว้ใน log ด้วย
+        addLogEntry(payload, true, `สำเร็จ → คนไข้ ${data.record.patientId} (${data.record.patientName})`);
+        $('lastSync').textContent = new Date().toLocaleTimeString('th-TH', { hour12:false });
+      }
     } catch (err) {
-      addLogEntry(record, false, err.message);
+      addLogEntry(payload, false, 'ล้มเหลว: เชื่อมต่อ server ไม่ได้');
     } finally {
       setTimeout(() => {
         syncDot.classList.remove('syncing');
@@ -356,76 +349,6 @@
       $('autoStatus').textContent = 'ปิดอยู่';
     }
   });
-
-  // ---------- ทะเบียนคนไข้ ----------
-  function getBaseUrl(){
-    // ดึง base URL จากช่อง Backend URL เช่น http://192.168.1.43:3000/api/vitals -> http://192.168.1.43:3000
-    return $('apiUrl').value.replace(/\/api\/vitals\/?$/, '');
-  }
-
-  async function loadPatients(){
-    const sel = $('patientSelect');
-    try {
-      const res = await fetch(getBaseUrl() + '/api/patients');
-      const patients = await res.json();
-      const prevValue = sel.value;
-      sel.innerHTML = '';
-      if (!patients.length) {
-        sel.innerHTML = '<option value="">— ยังไม่มีคนไข้ในระบบ —</option>';
-      } else {
-        patients.forEach(p => {
-          const opt = document.createElement('option');
-          opt.value = p.patientId;
-          opt.textContent = `${p.patientId} — ${p.name}`;
-          sel.appendChild(opt);
-        });
-      }
-      const addOpt = document.createElement('option');
-      addOpt.value = '__new__';
-      addOpt.textContent = '+ เพิ่มคนไข้ใหม่';
-      sel.appendChild(addOpt);
-
-      if (patients.some(p => p.patientId === prevValue)) sel.value = prevValue;
-    } catch (err) {
-      sel.innerHTML = '<option value="">โหลดรายชื่อไม่สำเร็จ — เช็ค Backend URL</option>';
-    }
-  }
-
-  $('patientSelect').addEventListener('change', () => {
-    $('newPatientForm').style.display = $('patientSelect').value === '__new__' ? 'block' : 'none';
-  });
-
-  $('apiUrl').addEventListener('change', loadPatients);
-
-  $('createPatientBtn').addEventListener('click', async () => {
-    const patientId = $('newPatientId').value.trim();
-    const name = $('newPatientName').value.trim();
-    if (!patientId || !name) {
-      alert('กรุณากรอกรหัสคนไข้และชื่อให้ครบ');
-      return;
-    }
-    try {
-      const res = await fetch(getBaseUrl() + '/api/patients', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ patientId, name }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'สร้างคนไข้ไม่สำเร็จ');
-        return;
-      }
-      $('newPatientId').value = '';
-      $('newPatientName').value = '';
-      $('newPatientForm').style.display = 'none';
-      await loadPatients();
-      $('patientSelect').value = patientId;
-    } catch (err) {
-      alert('เชื่อมต่อ backend ไม่สำเร็จ: ' + err.message);
-    }
-  });
-
-  loadPatients();
 </script>
 </body>
 </html>
