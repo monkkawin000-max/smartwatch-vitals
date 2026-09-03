@@ -360,29 +360,26 @@ app.delete('/api/devices/:patientId', requireRole('it'), (req, res) => {
 // ---------- Vital Signs ----------
 
 app.post('/api/vitals', (req, res) => {
-  const { patientId, patientName, heartRate, systolic, diastolic, spo2, temperature } = req.body;
+  const { deviceId, heartRate, systolic, diastolic, spo2, temperature } = req.body;
 
-  if (!patientId) {
-    return res.status(400).json({ error: 'กรุณาระบุ patientId' });
+  if (!deviceId) {
+    return res.status(400).json({ error: 'กรุณาระบุ deviceId' });
   }
 
-  if (!patients.some((p) => p.patientId === patientId)) {
-    patients.push({
-      patientId: String(patientId),
-      name: patientName || patientId,
-      age: null,
-      note: '',
-      active: true,
-      passwordHash: null,
-      createdAt: new Date().toISOString(),
-    });
-    saveJson(PATIENTS_FILE, patients);
+  const pairing = devices.find((dv) => dv.deviceId === String(deviceId));
+  if (!pairing) {
+    return res.status(404).json({ error: 'อุปกรณ์นี้ยังไม่ได้ลงทะเบียนกับคนไข้รายใด กรุณาติดต่อเจ้าหน้าที่ IT' });
+  }
+
+  const patient = patients.find((p) => p.patientId === pairing.patientId);
+  if (!patient || !patient.active) {
+    return res.status(403).json({ error: 'คนไข้ที่ผูกกับอุปกรณ์นี้ปิดบัญชีอยู่ ไม่สามารถบันทึกข้อมูลได้' });
   }
 
   const record = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-    patientId: String(patientId),
-    patientName: patientName || patientId,
+    patientId: patient.patientId,
+    patientName: patient.name,
     heartRate: Number(heartRate),
     systolic: Number(systolic),
     diastolic: Number(diastolic),
@@ -396,7 +393,7 @@ app.post('/api/vitals', (req, res) => {
 
   saveJson(VITALS_FILE, vitalRecords);
 
-  console.log(`[SYNC] รับค่าจากคนไข้ ${record.patientId} เวลา ${record.timestamp} | HR ${record.heartRate} BP ${record.systolic}/${record.diastolic} SpO2 ${record.spo2} Temp ${record.temperature}`);
+  console.log(`[SYNC] อุปกรณ์ ${deviceId} -> คนไข้ ${record.patientId} เวลา ${record.timestamp} | HR ${record.heartRate} BP ${record.systolic}/${record.diastolic} SpO2 ${record.spo2} Temp ${record.temperature}`);
   res.status(201).json({ success: true, record });
 });
 
