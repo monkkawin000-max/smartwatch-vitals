@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ซิงค์ข้อมูลจาก Smart Watch จริง</title>
+<style>
+  :root{
+    --bg:#EEF3F2; --card:#FFFFFF; --ink:#17313E; --ink-dim:#5B7280;
+    --teal:#0E7C86; --teal-deep:#0B5E66; --teal-soft:#DCEEEC;
+    --amber:#E8A33D; --danger:#D64545; --line:#DCE6E4;
+    --mono:'JetBrains Mono',Consolas,monospace; --sans:'Space Grotesk','Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; padding:28px 16px 70px; background:var(--bg); color:var(--ink);
+        font-family:var(--sans); display:flex; flex-direction:column; align-items:center; }
+  h1{ font-size:15px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-dim); margin:0 0 20px; }
+
+  .panel{ width:100%; max-width:480px; background:var(--card); border:1px solid var(--line);
+          border-radius:18px; padding:20px 22px; margin-bottom:16px; }
+  .panel h2{ font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--ink-dim); margin:0 0 14px; }
+
+  label{ display:block; font-size:12px; color:var(--ink-dim); margin:0 0 6px; }
+  input{ width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line);
+         font-family:var(--sans); font-size:13.5px; margin-bottom:12px; background:#FBFDFC; color:var(--ink); }
+  .hint{ font-size:11.5px; color:var(--ink-dim); margin:-6px 0 14px; line-height:1.5; }
+
+  .btn{ width:100%; border:none; border-radius:12px; padding:13px; font-family:var(--sans);
+        font-weight:700; font-size:14px; cursor:pointer; margin-bottom:10px; }
+  .btn-primary{ background:var(--teal); color:#fff; }
+  .btn-primary:hover{ background:var(--teal-deep); }
+  .btn-danger{ background:#FDECEC; color:var(--danger); }
+  .btn:disabled{ background:#A9C4C3; color:#fff; cursor:not-allowed; }
+
+  .status{ display:flex; align-items:center; gap:8px; font-size:13px; padding:10px 0; }
+  .dot{ width:9px; height:9px; border-radius:50%; background:#C4CFCE; flex-shrink:0; }
+  .dot.on{ background:var(--teal); animation:pulse 1.6s infinite; }
+  .dot.err{ background:var(--danger); }
+  @keyframes pulse{ 50%{ opacity:.25; } }
+
+  .stat-row{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+  .stat{ background:var(--teal-soft); border-radius:12px; padding:12px 14px; }
+  .stat .l{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--teal-deep); }
+  .stat .v{ font-family:var(--mono); font-size:22px; font-weight:700; }
+  .stat .u{ font-size:10px; color:var(--ink-dim); margin-left:2px; }
+
+  .log{ max-height:220px; overflow-y:auto; font-family:var(--mono); font-size:11px; }
+  .log-item{ padding:6px 0; border-bottom:1px dashed var(--line); color:var(--ink-dim);
+             display:flex; justify-content:space-between; gap:8px; }
+  .log-item .ok{ color:var(--teal-deep); }
+  .log-item .fail{ color:var(--danger); }
+  .empty{ color:var(--ink-dim); font-size:12px; padding:6px 0; }
+
+  .warn-box{ background:#FDF3E3; color:#8A5A0A; border-radius:10px; padding:10px 12px;
+             font-size:12px; line-height:1.55; margin-bottom:14px; }
+</style>
+</head>
+<body>
+
+<h1>ซิงค์จาก Smart Watch จริง</h1>
+
+<div class="panel">
+  <div class="warn-box" id="supportWarn" style="display:none;"></div>
+
+  <h2>ตั้งค่า</h2>
+  <label>หมายเลขอุปกรณ์ (Device ID)</label>
+  <input type="text" id="deviceId" placeholder="เช่น SW-001" />
+  <div class="hint">ต้องตรงกับหมายเลขที่เจ้าหน้าที่ IT ผูกไว้กับคนไข้ในหน้า "ลงทะเบียนอุปกรณ์"</div>
+
+  <button class="btn btn-primary" id="connectBtn">เชื่อมต่อนาฬิกา</button>
+  <button class="btn btn-danger" id="disconnectBtn" style="display:none;">ตัดการเชื่อมต่อ</button>
+
+  <div class="status">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">ยังไม่ได้เชื่อมต่อ</span>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>ค่าล่าสุดที่อ่านได้จากนาฬิกา</h2>
+  <div class="stat-row">
+    <div class="stat"><div class="l">Heart Rate</div><div class="v" id="vHR">--<span class="u">bpm</span></div></div>
+    <div class="stat"><div class="l">Blood Pressure</div><div class="v" id="vBP">--/--<span class="u">mmHg</span></div></div>
+    <div class="stat"><div class="l">SpO2</div><div class="v" id="vSpo2">--<span class="u">%</span></div></div>
+    <div class="stat"><div class="l">อัปเดตล่าสุด</div><div class="v" id="vTime" style="font-size:14px;">--</div></div>
+  </div>
+  <div class="hint" style="margin:14px 0 0;">
+    เริ่มวัดที่ตัวนาฬิกา (เมนูวัดหัวใจ) แล้วค่าจะไหลเข้ามาที่นี่อัตโนมัติ
+    — ค่าที่อ่านได้จะถูกส่งเข้าระบบให้หมอเห็นทุก <b id="intervalLabel">30</b> วินาที
+  </div>
+</div>
+
+<div class="panel">
+  <h2>ประวัติการส่งเข้าระบบ</h2>
+  <div class="log" id="logList"><div class="empty">ยังไม่มีการส่งค่า</div></div>
+</div>
+
+<script>
+  // ===== ค่าคงที่ของโปรโตคอลนาฬิกา Y19PRO (ได้จากการถอดรหัสด้วย nRF Connect) =====
+  const SERVICE_UUID = '6e400801-b5a3-f393-e0a9-e50e24dcca9d';
+  const NOTIFY_UUID  = '6e400003-b5a3-f393-e0a9-e50e24dcca9d'; // นาฬิกา -> มือถือ (รับข้อมูล)
+  const WRITE_UUID   = '6e400002-b5a3-f393-e0a9-e50e24dcca9d'; // มือถือ -> นาฬิกา (ส่งคำสั่ง, ยังไม่ได้ใช้)
+
+  // ตำแหน่ง byte ในแพ็กเก็ตวัดค่า (ยาว 20 bytes, byte ตัวที่ 5 = 0x0E)
+  const PKT_LEN       = 20;
+  const TYPE_INDEX    = 5;
+  const TYPE_MEASURE  = 0x0E;
+  const IDX_SPO2      = 16;
+  const IDX_SYSTOLIC  = 17;
+  const IDX_DIASTOLIC = 18;
+  const IDX_HEARTRATE = 19;
+
+  const SEND_INTERVAL_MS = 30000; // ส่งเข้าระบบทุก 30 วินาที (กันยิง API ถี่เกินไป)
+
+  const $ = (id) => document.getElementById(id);
+  let bleDevice = null;
+  let notifyChar = null;
+  let latest = null;        // ค่าล่าสุดที่ถอดรหัสได้
+  let sendTimer = null;
+  let hasLogged = false;
+
+  $('intervalLabel').textContent = SEND_INTERVAL_MS / 1000;
+
+  // ---------- เช็คว่าเบราว์เซอร์รองรับ Web Bluetooth ไหม ----------
+  if (!navigator.bluetooth) {
+    $('supportWarn').style.display = 'block';
+    $('supportWarn').innerHTML = 'เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth — ใช้ <b>Chrome บน Android</b> หรือ Chrome/Edge บนคอมพิวเตอร์เท่านั้น (iPhone/Safari ใช้ไม่ได้)';
+    $('connectBtn').disabled = true;
+  }
+
+  function setStatus(text, state){
+    $('statusText').textContent = text;
+    $('statusDot').className = 'dot' + (state ? ' ' + state : '');
+  }
+
+  function addLog(message, ok){
+    if (!hasLogged){ $('logList').innerHTML = ''; hasLogged = true; }
+    const div = document.createElement('div');
+    div.className = 'log-item';
+    const time = new Date().toLocaleTimeString('th-TH', { hour12:false });
+    div.innerHTML = `<span>${time}</span><span class="${ok ? 'ok' : 'fail'}">${message}</span>`;
+    $('logList').prepend(div);
+  }
+
+  // ---------- เชื่อมต่อนาฬิกา ----------
+  $('connectBtn').addEventListener('click', async () => {
+    if (!$('deviceId').value.trim()){
+      alert('กรุณากรอกหมายเลขอุปกรณ์ (Device ID) ก่อน');
+      return;
+    }
+
+    try {
+      setStatus('กำลังค้นหานาฬิกา...', 'on');
+
+      bleDevice = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [SERVICE_UUID] }],
+        optionalServices: [SERVICE_UUID],
+      });
+
+      bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+      setStatus('กำลังเชื่อมต่อ...', 'on');
+      const server  = await bleDevice.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      notifyChar    = await service.getCharacteristic(NOTIFY_UUID);
+
+      await notifyChar.startNotifications();
+      notifyChar.addEventListener('characteristicvaluechanged', onPacket);
+
+      setStatus(`เชื่อมต่อแล้ว: ${bleDevice.name || 'Smart Watch'}`, 'on');
+      $('connectBtn').style.display = 'none';
+      $('disconnectBtn').style.display = 'block';
+      addLog('เชื่อมต่อนาฬิกาสำเร็จ', true);
+
+      // เริ่มจับเวลาส่งข้อมูลเข้าระบบเป็นรอบๆ
+      sendTimer = setInterval(sendToServer, SEND_INTERVAL_MS);
+
+    } catch (err) {
+      setStatus('เชื่อมต่อไม่สำเร็จ: ' + err.message, 'err');
+      addLog('เชื่อมต่อไม่สำเร็จ: ' + err.message, false);
+    }
+  });
+
+  $('disconnectBtn').addEventListener('click', () => {
+    if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
+  });
+
+  function onDisconnected(){
+    setStatus('ตัดการเชื่อมต่อแล้ว', 'err');
+    $('connectBtn').style.display = 'block';
+    $('disconnectBtn').style.display = 'none';
+    if (sendTimer){ clearInterval(sendTimer); sendTimer = null; }
+    addLog('นาฬิกาตัดการเชื่อมต่อ', false);
+  }
+
+  // ---------- ถอดรหัสแพ็กเก็ตที่นาฬิกาส่งมา ----------
+  function onPacket(event){
+    const data = new Uint8Array(event.target.value.buffer);
+
+    // สนใจเฉพาะแพ็กเก็ตวัดค่า (ยาว 20 bytes และ byte ที่ 5 = 0x0E) แพ็กเก็ตอื่นเป็นข้อมูลสถานะ ข้ามไป
+    if (data.length < PKT_LEN || data[TYPE_INDEX] !== TYPE_MEASURE) return;
+
+    const spo2      = data[IDX_SPO2];
+    const systolic  = data[IDX_SYSTOLIC];
+    const diastolic = data[IDX_DIASTOLIC];
+    const heartRate = data[IDX_HEARTRATE];
+
+    // กรองค่าที่เป็นไปไม่ได้ทางสรีรวิทยาออก (กันข้อมูลขยะ/แพ็กเก็ตที่อ่านผิดประเภท)
+    if (heartRate < 30 || heartRate > 220) return;
+    if (spo2 < 70 || spo2 > 100) return;
+    if (systolic < 60 || systolic > 250) return;
+    if (diastolic < 30 || diastolic > 150) return;
+
+    latest = { heartRate, systolic, diastolic, spo2, readAt: new Date() };
+
+    $('vHR').innerHTML   = heartRate + '<span class="u">bpm</span>';
+    $('vBP').innerHTML   = systolic + '/' + diastolic + '<span class="u">mmHg</span>';
+    $('vSpo2').innerHTML = spo2 + '<span class="u">%</span>';
+    $('vTime').textContent = latest.readAt.toLocaleTimeString('th-TH', { hour12:false });
+  }
+
+  // ---------- ส่งค่าล่าสุดเข้าระบบ ----------
+  async function sendToServer(){
+    if (!latest) return; // ยังไม่มีค่าที่อ่านได้ ยังไม่ต้องส่ง
+
+    const payload = {
+      deviceId: $('deviceId').value.trim(),
+      heartRate: latest.heartRate,
+      systolic: latest.systolic,
+      diastolic: latest.diastolic,
+      spo2: latest.spo2,
+      temperature: null, // นาฬิการุ่นนี้ไม่มีเซนเซอร์วัดอุณหภูมิ
+    };
+
+    try {
+      const res = await fetch('/api/vitals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+
+      if (!res.ok){
+        addLog('ส่งไม่สำเร็จ: ' + (data.error || ('HTTP ' + res.status)), false);
+      } else {
+        addLog(`ส่งสำเร็จ → คนไข้ ${data.record.patientId} | HR ${payload.heartRate} BP ${payload.systolic}/${payload.diastolic} SpO2 ${payload.spo2}%`, true);
+      }
+    } catch (err) {
+      addLog('ส่งไม่สำเร็จ: เชื่อมต่อ server ไม่ได้', false);
+    }
+  }
+</script>
+</body>
+</html>
