@@ -153,7 +153,7 @@
       setStatus('กำลังค้นหานาฬิกา...', 'on');
 
       bleDevice = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [SERVICE_UUID] }],
+        filters: [{ namePrefix: 'Y19PRO' }],
         optionalServices: [SERVICE_UUID],
       });
 
