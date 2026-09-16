@@ -91,6 +91,15 @@
 </div>
 
 <div class="panel">
+  <h2>Bytes ดิบที่ได้รับ (สำหรับเทียบ/debug)</h2>
+  <div class="hint" style="margin:0 0 10px;">
+    แสดงทุกแพ็กเก็ตที่นาฬิกาส่งมา พร้อมตำแหน่ง byte ที่ระบบเดาไว้ (SpO2=#16, Systolic=#17, Diastolic=#18, HR=#19)
+    — เทียบกับตัวเลขที่นาฬิกาโชว์จริงได้เลยว่าตรงไหม
+  </div>
+  <div class="log" id="rawLog"><div class="empty">ยังไม่มีข้อมูลเข้ามา</div></div>
+</div>
+
+<div class="panel">
   <h2>ประวัติการส่งเข้าระบบ</h2>
   <div class="log" id="logList"><div class="empty">ยังไม่มีการส่งค่า</div></div>
 </div>
@@ -118,6 +127,7 @@
   let latest = null;        // ค่าล่าสุดที่ถอดรหัสได้
   let sendTimer = null;
   let hasLogged = false;
+  let hasRawLogged = false;
 
   $('intervalLabel').textContent = SEND_INTERVAL_MS / 1000;
 
@@ -140,6 +150,25 @@
     const time = new Date().toLocaleTimeString('th-TH', { hour12:false });
     div.innerHTML = `<span>${time}</span><span class="${ok ? 'ok' : 'fail'}">${message}</span>`;
     $('logList').prepend(div);
+  }
+
+  function addRawLog(bytes){
+    if (!hasRawLogged){ $('rawLog').innerHTML = ''; hasRawLogged = true; }
+    const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('-');
+    const time = new Date().toLocaleTimeString('th-TH', { hour12:false }) + '.' + String(new Date().getMilliseconds()).padStart(3, '0');
+
+    let decoded = '';
+    if (bytes.length >= PKT_LEN && bytes[TYPE_INDEX] === TYPE_MEASURE){
+      decoded = ` → SpO2=${bytes[IDX_SPO2]} Sys=${bytes[IDX_SYSTOLIC]} Dia=${bytes[IDX_DIASTOLIC]} HR=${bytes[IDX_HEARTRATE]}`;
+    }
+
+    const div = document.createElement('div');
+    div.className = 'log-item';
+    div.innerHTML = `<span>${time}</span><span style="text-align:right;">${hex}<br><span class="ok">${decoded}</span></span>`;
+    $('rawLog').prepend(div);
+
+    // จำกัดไม่ให้ log ยาวเกินไป เก็บแค่ 30 รายการล่าสุด
+    while ($('rawLog').children.length > 30) $('rawLog').removeChild($('rawLog').lastChild);
   }
 
   // ---------- เชื่อมต่อนาฬิกา ----------
@@ -196,6 +225,7 @@
   // ---------- ถอดรหัสแพ็กเก็ตที่นาฬิกาส่งมา ----------
   function onPacket(event){
     const data = new Uint8Array(event.target.value.buffer);
+    addRawLog(data); // แสดง bytes ดิบทุกแพ็กเก็ตที่เข้ามา (สำหรับเทียบ/debug)
 
     // สนใจเฉพาะแพ็กเก็ตวัดค่า (ยาว 20 bytes และ byte ที่ 5 = 0x0E) แพ็กเก็ตอื่นเป็นข้อมูลสถานะ ข้ามไป
     if (data.length < PKT_LEN || data[TYPE_INDEX] !== TYPE_MEASURE) return;
