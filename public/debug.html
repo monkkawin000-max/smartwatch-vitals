@@ -54,9 +54,10 @@
   table{ width:100%; border-collapse:collapse; font-size:11px; }
   th, td{ text-align:left; padding:6px 5px; border-bottom:1px solid var(--line); white-space:nowrap; }
   th{ font-size:9.5px; text-transform:uppercase; color:var(--ink-dim); position:sticky; top:0; background:var(--card); }
+  td.date{ font-family:var(--mono); color:var(--ink-dim); }
   td.time{ font-family:var(--mono); color:var(--ink-dim); }
-  td.hex{ font-family:var(--mono); font-size:10px; }
-  td.decoded{ font-family:var(--mono); color:var(--teal-deep); font-weight:700; }
+  td.val{ font-family:var(--mono); color:var(--teal-deep); font-weight:700; text-align:center; }
+  td.hex{ font-family:var(--mono); font-size:9.5px; color:#A8B4B3; }
   .table-wrap{ max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:10px; }
   .empty{ color:var(--ink-dim); font-size:12px; padding:14px; text-align:center; }
 </style>
@@ -97,7 +98,7 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>เวลา</th><th>Bytes ดิบ</th><th>ถอดรหัส (SpO2/Sys/Dia/HR)</th></tr>
+        <tr><th>วันที่</th><th>เวลา</th><th>หัวใจ</th><th>เลือด</th><th>SpO2</th><th>Bytes ดิบ</th></tr>
       </thead>
       <tbody id="tbody"></tbody>
     </table>
@@ -138,6 +139,11 @@
     return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(),3)}`;
   }
 
+  function dateLabel(){
+    const d = new Date();
+    return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()+543}`;
+  }
+
   $('connectBtn').addEventListener('click', async () => {
     try {
       setStatus('กำลังค้นหานาฬิกา...', 'on');
@@ -174,30 +180,31 @@
 
   function onPacket(event){
     const data = new Uint8Array(event.target.value.buffer);
+
+    // ตารางนี้โชว์เฉพาะแพ็กเก็ตวัดค่าจริง (ยาว 20 bytes, type 0x0E) แพ็กเก็ตสถานะอื่นๆ ข้ามไป ไม่ขึ้นในตาราง
+    if (data.length < PKT_LEN || data[TYPE_INDEX] !== TYPE_MEASURE) return;
+
     const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('-');
+    const spo2 = data[IDX_SPO2], sys = data[IDX_SYSTOLIC], dia = data[IDX_DIASTOLIC], hr = data[IDX_HEARTRATE];
 
-    let decoded = '—';
-    if (data.length >= PKT_LEN && data[TYPE_INDEX] === TYPE_MEASURE){
-      const spo2 = data[IDX_SPO2], sys = data[IDX_SYSTOLIC], dia = data[IDX_DIASTOLIC], hr = data[IDX_HEARTRATE];
-      decoded = `${spo2} / ${sys} / ${dia} / ${hr}`;
-
-      // อัปเดตกล่องตัวเลขใหญ่ๆ ด้านบนด้วย
-      $('vHR').innerHTML = hr + '<span class="u">bpm</span>';
-      $('vBP').innerHTML = sys + '/' + dia + '<span class="u">mmHg</span>';
-      $('vSpo2').innerHTML = spo2 + '<span class="u">%</span>';
-      $('vTime').textContent = nowLabel();
-    }
-
-    const row = { time: nowLabel(), hex, decoded };
+    const row = { date: dateLabel(), time: nowLabel(), hr, bp: `${sys}/${dia}`, spo2: spo2 + '%', hex };
     rows.unshift(row);
     renderRow(row, true);
     $('rowCount').textContent = rows.length;
     $('emptyMsg').style.display = 'none';
+
+    // อัปเดตกล่องตัวเลขใหญ่ๆ ด้านบนด้วย
+    $('vHR').innerHTML = hr + '<span class="u">bpm</span>';
+    $('vBP').innerHTML = sys + '/' + dia + '<span class="u">mmHg</span>';
+    $('vSpo2').innerHTML = spo2 + '<span class="u">%</span>';
+    $('vTime').textContent = row.time;
   }
 
   function renderRow(row, prepend){
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="time">${row.time}</td><td class="hex">${row.hex}</td><td class="decoded">${row.decoded}</td>`;
+    tr.innerHTML = `<td class="date">${row.date}</td><td class="time">${row.time}</td>` +
+                    `<td class="val">${row.hr}</td><td class="val">${row.bp}</td><td class="val">${row.spo2}</td>` +
+                    `<td class="hex">${row.hex}</td>`;
     if (prepend) $('tbody').prepend(tr);
     else $('tbody').appendChild(tr);
   }
@@ -213,9 +220,8 @@
   $('copyBtn').addEventListener('click', async () => {
     if (rows.length === 0){ alert('ยังไม่มีข้อมูลให้คัดลอก'); return; }
 
-    const dateLabel = new Date().toLocaleDateString('th-TH');
-    const header = `BLE Debug Log — Y19PRO — ${dateLabel}\nเวลา | Bytes ดิบ | SpO2/Sys/Dia/HR\n`;
-    const text = header + rows.map(r => `${r.time}  ${r.hex}  → ${r.decoded}`).join('\n');
+    const header = `BLE Debug Log — Y19PRO\nวันที่ | เวลา | หัวใจ | เลือด | SpO2 | Bytes ดิบ\n`;
+    const text = header + rows.map(r => `${r.date} | ${r.time} | ${r.hr} | ${r.bp} | ${r.spo2} | ${r.hex}`).join('\n');
 
     try {
       await navigator.clipboard.writeText(text);
