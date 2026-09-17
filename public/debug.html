@@ -38,6 +38,12 @@
   .dot.err{ background:var(--danger); }
   @keyframes pulse{ 50%{ opacity:.25; } }
 
+  .stat-row{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+  .stat{ background:var(--teal-soft); border-radius:12px; padding:12px 14px; }
+  .stat .l{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--teal-deep); }
+  .stat .v{ font-family:var(--mono); font-size:24px; font-weight:700; }
+  .stat .u{ font-size:10px; color:var(--ink-dim); margin-left:2px; }
+
   .count-row{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
   .count-row .n{ font-size:12px; color:var(--ink-dim); }
   .count-row .n b{ color:var(--ink); font-family:var(--mono); }
@@ -66,6 +72,16 @@
   <div class="status">
     <span class="dot" id="statusDot"></span>
     <span id="statusText">ยังไม่ได้เชื่อมต่อ</span>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>ค่าล่าสุด (ดูง่ายๆ ตัวใหญ่)</h2>
+  <div class="stat-row">
+    <div class="stat"><div class="l">Heart Rate</div><div class="v" id="vHR">--<span class="u">bpm</span></div></div>
+    <div class="stat"><div class="l">Blood Pressure</div><div class="v" id="vBP">--/--<span class="u">mmHg</span></div></div>
+    <div class="stat"><div class="l">SpO2</div><div class="v" id="vSpo2">--<span class="u">%</span></div></div>
+    <div class="stat"><div class="l">เวลาที่อ่านได้</div><div class="v" id="vTime" style="font-size:15px;">--</div></div>
   </div>
 </div>
 
@@ -162,7 +178,14 @@
 
     let decoded = '—';
     if (data.length >= PKT_LEN && data[TYPE_INDEX] === TYPE_MEASURE){
-      decoded = `${data[IDX_SPO2]} / ${data[IDX_SYSTOLIC]} / ${data[IDX_DIASTOLIC]} / ${data[IDX_HEARTRATE]}`;
+      const spo2 = data[IDX_SPO2], sys = data[IDX_SYSTOLIC], dia = data[IDX_DIASTOLIC], hr = data[IDX_HEARTRATE];
+      decoded = `${spo2} / ${sys} / ${dia} / ${hr}`;
+
+      // อัปเดตกล่องตัวเลขใหญ่ๆ ด้านบนด้วย
+      $('vHR').innerHTML = hr + '<span class="u">bpm</span>';
+      $('vBP').innerHTML = sys + '/' + dia + '<span class="u">mmHg</span>';
+      $('vSpo2').innerHTML = spo2 + '<span class="u">%</span>';
+      $('vTime').textContent = nowLabel();
     }
 
     const row = { time: nowLabel(), hex, decoded };
