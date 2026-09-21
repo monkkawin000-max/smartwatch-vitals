@@ -113,7 +113,8 @@
   // ตำแหน่ง byte ในแพ็กเก็ตวัดค่า (ยาว 20 bytes, byte ตัวที่ 5 = 0x0E)
   const PKT_LEN       = 20;
   const TYPE_INDEX    = 5;
-  const TYPE_MEASURE  = 0x0E;
+  const TYPE_MEASURE  = 0x0E; // แพ็กเก็ตระหว่างวัด (ค่ายังไม่นิ่ง ห้ามเชื่อ)
+  const TYPE_SESSION_END = 0x05; // สัญญาณ "จบการวัดแล้ว" — พอเจอนี้ค่อยเชื่อแพ็กเก็ตล่าสุดก่อนหน้า
   const IDX_SPO2      = 16;
   const IDX_SYSTOLIC  = 17;
   const IDX_DIASTOLIC = 18;
@@ -124,7 +125,8 @@
   const $ = (id) => document.getElementById(id);
   let bleDevice = null;
   let notifyChar = null;
-  let latest = null;        // ค่าล่าสุดที่ถอดรหัสได้
+  let latest = null;        // ค่าที่ "ยืนยันแล้ว" (ผ่านสัญญาณจบ session) — อันนี้เท่านั้นที่ส่งเข้าระบบ
+  let pending = null;       // ค่าจากแพ็กเก็ตล่าสุดระหว่างกำลังวัด (ยังไม่นิ่ง รอยืนยัน)
   let sendTimer = null;
   let hasLogged = false;
   let hasRawLogged = false;
@@ -223,30 +225,46 @@
   }
 
   // ---------- ถอดรหัสแพ็กเก็ตที่นาฬิกาส่งมา ----------
+  // หลักการ (ยืนยันจากการทดสอบจริง 3 รอบ): ระหว่างกำลังวัด นาฬิกาจะส่งแพ็กเก็ตมาเรื่อยๆ ทุก ~2 วินาที
+  // แต่ค่าระหว่างทางไม่นิ่ง ไม่ตรงกับตัวเลขบนจอ — ต้องรอ "สัญญาณจบการวัด" ก่อน แล้วค่อยเชื่อแพ็กเก็ตล่าสุดก่อนหน้านั้น
   function onPacket(event){
     const data = new Uint8Array(event.target.value.buffer);
     addRawLog(data); // แสดง bytes ดิบทุกแพ็กเก็ตที่เข้ามา (สำหรับเทียบ/debug)
 
-    // สนใจเฉพาะแพ็กเก็ตวัดค่า (ยาว 20 bytes และ byte ที่ 5 = 0x0E) แพ็กเก็ตอื่นเป็นข้อมูลสถานะ ข้ามไป
-    if (data.length < PKT_LEN || data[TYPE_INDEX] !== TYPE_MEASURE) return;
+    const type = data[TYPE_INDEX];
 
-    const spo2      = data[IDX_SPO2];
-    const systolic  = data[IDX_SYSTOLIC];
-    const diastolic = data[IDX_DIASTOLIC];
-    const heartRate = data[IDX_HEARTRATE];
+    // แพ็กเก็ตวัดค่าระหว่างทาง — เก็บไว้ก่อนเฉยๆ (pending) ยังไม่เชื่อ ยังไม่โชว์
+    if (data.length >= PKT_LEN && type === TYPE_MEASURE){
+      const spo2      = data[IDX_SPO2];
+      const systolic  = data[IDX_SYSTOLIC];
+      const diastolic = data[IDX_DIASTOLIC];
+      const heartRate = data[IDX_HEARTRATE];
 
-    // กรองค่าที่เป็นไปไม่ได้ทางสรีรวิทยาออก (กันข้อมูลขยะ/แพ็กเก็ตที่อ่านผิดประเภท)
-    if (heartRate < 30 || heartRate > 220) return;
-    if (spo2 < 70 || spo2 > 100) return;
-    if (systolic < 60 || systolic > 250) return;
-    if (diastolic < 30 || diastolic > 150) return;
+      // กรองค่าที่เป็นไปไม่ได้ทางสรีรวิทยาออก (กันข้อมูลขยะ/แพ็กเก็ตที่อ่านผิดประเภท)
+      if (heartRate < 30 || heartRate > 220) return;
+      if (spo2 < 70 || spo2 > 100) return;
+      if (systolic < 60 || systolic > 250) return;
+      if (diastolic < 30 || diastolic > 150) return;
 
-    latest = { heartRate, systolic, diastolic, spo2, readAt: new Date() };
+      pending = { heartRate, systolic, diastolic, spo2 };
+      setStatus('กำลังวัด... (ยังไม่ยืนยันค่า)', 'on');
+      return;
+    }
 
-    $('vHR').innerHTML   = heartRate + '<span class="u">bpm</span>';
-    $('vBP').innerHTML   = systolic + '/' + diastolic + '<span class="u">mmHg</span>';
-    $('vSpo2').innerHTML = spo2 + '<span class="u">%</span>';
-    $('vTime').textContent = latest.readAt.toLocaleTimeString('th-TH', { hour12:false });
+    // สัญญาณจบการวัด — ตอนนี้ค่อยเชื่อค่าจาก pending และเอาไปโชว์/ส่งจริง
+    if (type === TYPE_SESSION_END){
+      if (!pending) return; // ยังไม่เคยมีแพ็กเก็ตวัดค่าเข้ามาก่อนหน้าเลย ไม่มีอะไรให้ยืนยัน
+
+      latest = { ...pending, readAt: new Date() };
+      pending = null;
+
+      $('vHR').innerHTML   = latest.heartRate + '<span class="u">bpm</span>';
+      $('vBP').innerHTML   = latest.systolic + '/' + latest.diastolic + '<span class="u">mmHg</span>';
+      $('vSpo2').innerHTML = latest.spo2 + '<span class="u">%</span>';
+      $('vTime').textContent = latest.readAt.toLocaleTimeString('th-TH', { hour12:false });
+      setStatus(`เชื่อมต่อแล้ว: ${bleDevice.name || 'Smart Watch'}`, 'on');
+      addLog(`ยืนยันค่าจากการวัด: HR ${latest.heartRate} BP ${latest.systolic}/${latest.diastolic} SpO2 ${latest.spo2}%`, true);
+    }
   }
 
   // ---------- ส่งค่าล่าสุดเข้าระบบ ----------
