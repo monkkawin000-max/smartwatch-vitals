@@ -86,7 +86,7 @@
   </div>
   <div class="hint" style="margin:14px 0 0;">
     เริ่มวัดที่ตัวนาฬิกา (เมนูวัดหัวใจ) แล้วค่าจะไหลเข้ามาที่นี่อัตโนมัติ
-    — ค่าที่อ่านได้จะถูกส่งเข้าระบบให้หมอเห็นทุก <b id="intervalLabel">30</b> วินาที
+    — เมื่อจบการวัดแต่ละรอบ ค่าจะถูกส่งเข้าระบบให้หมอเห็นทันที (ครั้งเดียวต่อการวัด 1 รอบ) พร้อมเวลาตามนาฬิกา
   </div>
 </div>
 
@@ -120,18 +120,37 @@
   const IDX_DIASTOLIC = 18;
   const IDX_HEARTRATE = 19;
 
-  const SEND_INTERVAL_MS = 30000; // ส่งเข้าระบบทุก 30 วินาที (กันยิง API ถี่เกินไป)
+  // ===== ถอดเวลาจากแพ็กเก็ต: byte 13-15 = วินาทีนับจากเที่ยงคืนตามนาฬิกา (big-endian 24 บิต) =====
+  function watchClockSec(d){
+    if (d.length < 16) return null;
+    const sec = (d[13] << 16) | (d[14] << 8) | d[15];
+    return sec < 86400 ? sec : null;
+  }
+  function clockLabelFromSec(sec){
+    if (sec === null) return '--:--:--';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${p(Math.floor(sec/3600))}:${p(Math.floor(sec%3600/60))}:${p(sec%60)}`;
+  }
+  // แปลงวินาทีของนาฬิกาเป็น Date เต็ม โดยใช้วันที่ของมือถือ (แก้กรณีคร่อมเที่ยงคืน)
+  function watchDateFromSec(sec){
+    if (sec === null) return null;
+    const now = new Date();
+    let t = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() + sec * 1000;
+    const diff = t - now.getTime();
+    if (diff > 12*3600*1000) t -= 86400*1000;
+    else if (diff < -12*3600*1000) t += 86400*1000;
+    return new Date(t);
+  }
 
   const $ = (id) => document.getElementById(id);
   let bleDevice = null;
   let notifyChar = null;
   let latest = null;        // ค่าที่ "ยืนยันแล้ว" (ผ่านสัญญาณจบ session) — อันนี้เท่านั้นที่ส่งเข้าระบบ
   let pending = null;       // ค่าจากแพ็กเก็ตล่าสุดระหว่างกำลังวัด (ยังไม่นิ่ง รอยืนยัน)
-  let sendTimer = null;
+  let outbox = [];          // ค่าที่ยืนยันแล้วแต่ยังส่งไม่สำเร็จ (รอส่งใหม่)
+  let sending = false;
   let hasLogged = false;
   let hasRawLogged = false;
-
-  $('intervalLabel').textContent = SEND_INTERVAL_MS / 1000;
 
   // ---------- เช็คว่าเบราว์เซอร์รองรับ Web Bluetooth ไหม ----------
   if (!navigator.bluetooth) {
@@ -161,7 +180,7 @@
 
     let decoded = '';
     if (bytes.length >= PKT_LEN && bytes[TYPE_INDEX] === TYPE_MEASURE){
-      decoded = ` → SpO2=${bytes[IDX_SPO2]} Sys=${bytes[IDX_SYSTOLIC]} Dia=${bytes[IDX_DIASTOLIC]} HR=${bytes[IDX_HEARTRATE]}`;
+      decoded = ` → นาฬิกา ${clockLabelFromSec(watchClockSec(bytes))} | SpO2=${bytes[IDX_SPO2]} Sys=${bytes[IDX_SYSTOLIC]} Dia=${bytes[IDX_DIASTOLIC]} HR=${bytes[IDX_HEARTRATE]}`;
     }
 
     const div = document.createElement('div');
@@ -203,9 +222,6 @@
       $('disconnectBtn').style.display = 'block';
       addLog('เชื่อมต่อนาฬิกาสำเร็จ', true);
 
-      // เริ่มจับเวลาส่งข้อมูลเข้าระบบเป็นรอบๆ
-      sendTimer = setInterval(sendToServer, SEND_INTERVAL_MS);
-
     } catch (err) {
       setStatus('เชื่อมต่อไม่สำเร็จ: ' + err.message, 'err');
       addLog('เชื่อมต่อไม่สำเร็จ: ' + err.message, false);
@@ -220,7 +236,6 @@
     setStatus('ตัดการเชื่อมต่อแล้ว', 'err');
     $('connectBtn').style.display = 'block';
     $('disconnectBtn').style.display = 'none';
-    if (sendTimer){ clearInterval(sendTimer); sendTimer = null; }
     addLog('นาฬิกาตัดการเชื่อมต่อ', false);
   }
 
@@ -246,7 +261,9 @@
       if (systolic < 60 || systolic > 250) return;
       if (diastolic < 30 || diastolic > 150) return;
 
-      pending = { heartRate, systolic, diastolic, spo2 };
+      const sec = watchClockSec(data);
+      const wd = watchDateFromSec(sec);
+      pending = { heartRate, systolic, diastolic, spo2, clockLabel: clockLabelFromSec(sec), measuredAt: wd ? wd.toISOString() : null };
       setStatus('กำลังวัด... (ยังไม่ยืนยันค่า)', 'on');
       return;
     }
@@ -261,40 +278,56 @@
       $('vHR').innerHTML   = latest.heartRate + '<span class="u">bpm</span>';
       $('vBP').innerHTML   = latest.systolic + '/' + latest.diastolic + '<span class="u">mmHg</span>';
       $('vSpo2').innerHTML = latest.spo2 + '<span class="u">%</span>';
-      $('vTime').textContent = latest.readAt.toLocaleTimeString('th-TH', { hour12:false });
+      $('vTime').textContent = latest.clockLabel + ' (นาฬิกา)';
       setStatus(`เชื่อมต่อแล้ว: ${bleDevice.name || 'Smart Watch'}`, 'on');
-      addLog(`ยืนยันค่าจากการวัด: HR ${latest.heartRate} BP ${latest.systolic}/${latest.diastolic} SpO2 ${latest.spo2}%`, true);
+      addLog(`ยืนยันค่าจากการวัด: HR ${latest.heartRate} BP ${latest.systolic}/${latest.diastolic} SpO2 ${latest.spo2}% (เวลานาฬิกา ${latest.clockLabel})`, true);
+
+      // ส่งเข้าระบบครั้งเดียวต่อการวัด 1 รอบ (ไม่ส่งซ้ำตามเวลาอีกแล้ว)
+      outbox.push(latest);
+      if (outbox.length > 50) outbox.shift();
+      flushOutbox();
     }
   }
 
-  // ---------- ส่งค่าล่าสุดเข้าระบบ ----------
-  async function sendToServer(){
-    if (!latest) return; // ยังไม่มีค่าที่อ่านได้ ยังไม่ต้องส่ง
-
-    const payload = {
-      deviceId: $('deviceId').value.trim(),
-      heartRate: latest.heartRate,
-      systolic: latest.systolic,
-      diastolic: latest.diastolic,
-      spo2: latest.spo2,
-      temperature: null, // นาฬิการุ่นนี้ไม่มีเซนเซอร์วัดอุณหภูมิ
-    };
-
+  // ---------- ส่งค่าที่ยืนยันแล้วเข้าระบบ (ทีละรายการตามลำดับ) ----------
+  async function flushOutbox(){
+    if (sending) return;
+    sending = true;
     try {
-      const res = await fetch('/api/vitals', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-
-      if (!res.ok){
-        addLog('ส่งไม่สำเร็จ: ' + (data.error || ('HTTP ' + res.status)), false);
-      } else {
-        addLog(`ส่งสำเร็จ → คนไข้ ${data.record.patientId} | HR ${payload.heartRate} BP ${payload.systolic}/${payload.diastolic} SpO2 ${payload.spo2}%`, true);
+      while (outbox.length){
+        const r = outbox[0];
+        const payload = {
+          deviceId: $('deviceId').value.trim(),
+          heartRate: r.heartRate,
+          systolic: r.systolic,
+          diastolic: r.diastolic,
+          spo2: r.spo2,
+          temperature: null, // นาฬิการุ่นนี้ไม่มีเซนเซอร์วัดอุณหภูมิ
+          measuredAt: r.measuredAt, // เวลาที่วัดจริงตามนาฬิกา
+        };
+        let res, data;
+        try {
+          res = await fetch('/api/vitals', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          data = await res.json();
+        } catch (err) {
+          addLog('ส่งไม่สำเร็จ: เชื่อมต่อ server ไม่ได้ (จะลองใหม่ตอนวัดรอบหน้า)', false);
+          break;
+        }
+        if (!res.ok){
+          addLog('ส่งไม่สำเร็จ: ' + (data.error || ('HTTP ' + res.status)), false);
+          if (res.status >= 500) break; // ปัญหาฝั่ง server — เก็บไว้ลองใหม่
+          outbox.shift();               // 4xx ส่งซ้ำก็ไม่สำเร็จ — ทิ้ง
+          continue;
+        }
+        outbox.shift();
+        addLog(`${data.duplicate ? 'มีอยู่แล้ว (ข้าม)' : 'ส่งสำเร็จ'} → คนไข้ ${data.record.patientId} | HR ${payload.heartRate} BP ${payload.systolic}/${payload.diastolic} SpO2 ${payload.spo2}% | นาฬิกา ${r.clockLabel}`, true);
       }
-    } catch (err) {
-      addLog('ส่งไม่สำเร็จ: เชื่อมต่อ server ไม่ได้', false);
+    } finally {
+      sending = false;
     }
   }
 </script>

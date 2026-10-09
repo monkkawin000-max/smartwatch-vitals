@@ -85,7 +85,7 @@
     <div class="stat"><div class="l">Heart Rate</div><div class="v" id="vHR">--<span class="u">bpm</span></div></div>
     <div class="stat"><div class="l">Blood Pressure</div><div class="v" id="vBP">--/--<span class="u">mmHg</span></div></div>
     <div class="stat"><div class="l">SpO2</div><div class="v" id="vSpo2">--<span class="u">%</span></div></div>
-    <div class="stat"><div class="l">เวลาที่อ่านได้</div><div class="v" id="vTime" style="font-size:15px;">--</div></div>
+    <div class="stat"><div class="l">เวลาที่วัด (ตามนาฬิกา)</div><div class="v" id="vTime" style="font-size:15px;">--</div></div>
   </div>
 </div>
 
@@ -101,7 +101,7 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th></th><th>วันที่</th><th>เวลา</th><th>หัวใจ</th><th>เลือด</th><th>SpO2</th><th>Bytes ดิบ</th></tr>
+        <tr><th></th><th>วันที่</th><th>เวลามือถือ</th><th>นาฬิกา</th><th>หัวใจ</th><th>เลือด</th><th>SpO2</th><th>Bytes ดิบ</th></tr>
       </thead>
       <tbody id="tbody"></tbody>
     </table>
@@ -121,6 +121,28 @@
   const IDX_SYSTOLIC  = 17;
   const IDX_DIASTOLIC = 18;
   const IDX_HEARTRATE = 19;
+
+  // ===== ถอดเวลาจากแพ็กเก็ต: byte 13-15 = วินาทีนับจากเที่ยงคืนตามนาฬิกา (big-endian 24 บิต) =====
+  function watchClockSec(d){
+    if (d.length < 16) return null;
+    const sec = (d[13] << 16) | (d[14] << 8) | d[15];
+    return sec < 86400 ? sec : null;
+  }
+  function clockLabelFromSec(sec){
+    if (sec === null) return '--:--:--';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${p(Math.floor(sec/3600))}:${p(Math.floor(sec%3600/60))}:${p(sec%60)}`;
+  }
+  // แปลงวินาทีของนาฬิกาเป็น Date เต็ม โดยใช้วันที่ของมือถือ (แก้กรณีคร่อมเที่ยงคืน)
+  function watchDateFromSec(sec){
+    if (sec === null) return null;
+    const now = new Date();
+    let t = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() + sec * 1000;
+    const diff = t - now.getTime();
+    if (diff > 12*3600*1000) t -= 86400*1000;
+    else if (diff < -12*3600*1000) t += 86400*1000;
+    return new Date(t);
+  }
 
   const $ = (id) => document.getElementById(id);
   let bleDevice = null;
@@ -194,7 +216,7 @@
       const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('-');
       const spo2 = data[IDX_SPO2], sys = data[IDX_SYSTOLIC], dia = data[IDX_DIASTOLIC], hr = data[IDX_HEARTRATE];
 
-      const row = { date: dateLabel(), time: nowLabel(), hr, bp: `${sys}/${dia}`, spo2: spo2 + '%', hex, confirmed: false };
+      const row = { date: dateLabel(), time: nowLabel(), clock: clockLabelFromSec(watchClockSec(data)), hr, bp: `${sys}/${dia}`, spo2: spo2 + '%', hex, confirmed: false };
       rows.unshift(row);
       lastRowEl = renderRow(row, true);
       $('rowCount').textContent = rows.length;
@@ -215,14 +237,14 @@
       $('vHR').innerHTML = r.hr + '<span class="u">bpm</span>';
       $('vBP').innerHTML = r.bp + '<span class="u">mmHg</span>';
       $('vSpo2').innerHTML = r.spo2 + '<span class="u">%</span>';
-      $('vTime').textContent = r.time;
+      $('vTime').textContent = r.clock + ' (นาฬิกา)';
       setStatus(`เชื่อมต่อแล้ว: ${bleDevice.name || 'Smart Watch'}`, 'on');
     }
   }
 
   function renderRow(row, prepend){
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="flag"></td><td class="date">${row.date}</td><td class="time">${row.time}</td>` +
+    tr.innerHTML = `<td class="flag"></td><td class="date">${row.date}</td><td class="time">${row.time}</td><td class="time" style="color:var(--teal-deep);font-weight:700;">${row.clock}</td>` +
                     `<td class="val">${row.hr}</td><td class="val">${row.bp}</td><td class="val">${row.spo2}</td>` +
                     `<td class="hex">${row.hex}</td>`;
     if (prepend) $('tbody').prepend(tr); else $('tbody').appendChild(tr);
@@ -241,8 +263,8 @@
   $('copyBtn').addEventListener('click', async () => {
     if (rows.length === 0){ alert('ยังไม่มีข้อมูลให้คัดลอก'); return; }
 
-    const header = `BLE Debug Log — Y19PRO\nยืนยัน | วันที่ | เวลา | หัวใจ | เลือด | SpO2 | Bytes ดิบ\n`;
-    const text = header + rows.map(r => `${r.confirmed ? '✓' : ' '} | ${r.date} | ${r.time} | ${r.hr} | ${r.bp} | ${r.spo2} | ${r.hex}`).join('\n');
+    const header = `BLE Debug Log — Y19PRO\nยืนยัน | วันที่ | เวลามือถือ | เวลานาฬิกา | หัวใจ | เลือด | SpO2 | Bytes ดิบ\n`;
+    const text = header + rows.map(r => `${r.confirmed ? '✓' : ' '} | ${r.date} | ${r.time} | ${r.clock} | ${r.hr} | ${r.bp} | ${r.spo2} | ${r.hex}`).join('\n');
 
     try {
       await navigator.clipboard.writeText(text);
