@@ -360,7 +360,7 @@ app.delete('/api/devices/:patientId', requireRole('it'), (req, res) => {
 // ---------- Vital Signs ----------
 
 app.post('/api/vitals', (req, res) => {
-  const { deviceId, heartRate, systolic, diastolic, spo2, temperature } = req.body;
+  const { deviceId, heartRate, systolic, diastolic, spo2, temperature, measuredAt } = req.body;
 
   if (!deviceId) {
     return res.status(400).json({ error: 'กรุณาระบุ deviceId' });
@@ -376,6 +376,24 @@ app.post('/api/vitals', (req, res) => {
     return res.status(403).json({ error: 'คนไข้ที่ผูกกับอุปกรณ์นี้ปิดบัญชีอยู่ ไม่สามารถบันทึกข้อมูลได้' });
   }
 
+  // measuredAt = เวลาที่วัดจริงตามนาฬิกา (ถ้าส่งมาและสมเหตุสมผล) — ไม่งั้นใช้เวลาที่ server รับ
+  const receivedAt = new Date().toISOString();
+  let measured = null;
+  if (measuredAt) {
+    const t = new Date(measuredAt);
+    const ms = t.getTime();
+    // ต้องเป็นเวลาที่ถูกต้อง ไม่เกินอนาคต 5 นาที และไม่เก่าเกิน 7 วัน
+    if (!isNaN(ms) && ms <= Date.now() + 5 * 60 * 1000 && ms >= Date.now() - 7 * 24 * 3600 * 1000) {
+      measured = t.toISOString();
+    }
+  }
+
+  // กันบันทึกซ้ำ: คนไข้คนเดิม + เวลาวัดเดียวกัน = การวัดรอบเดียวกัน
+  if (measured) {
+    const dup = vitalRecords.find((r) => r.patientId === patient.patientId && r.measuredAt === measured);
+    if (dup) return res.status(200).json({ success: true, duplicate: true, record: dup });
+  }
+
   const record = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
     patientId: patient.patientId,
@@ -385,15 +403,19 @@ app.post('/api/vitals', (req, res) => {
     diastolic: Number(diastolic),
     spo2: Number(spo2),
     temperature: Number(temperature),
-    timestamp: new Date().toISOString(),
+    timestamp: measured || receivedAt, // เวลาที่ใช้แสดง/เรียง/สรุป = เวลาวัดจริง (ถ้ามี)
+    measuredAt: measured,              // เวลาวัดจริงตามนาฬิกา (null ถ้าไม่ได้ส่งมา เช่น emulator)
+    receivedAt,                        // เวลาที่ server รับข้อมูล
   };
 
   vitalRecords.unshift(record);
+  // เรียงใหม่สุดก่อนตามเวลาวัด (ข้อมูลอาจมาถึงไม่เรียงลำดับ)
+  vitalRecords.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
   if (vitalRecords.length > 3000) vitalRecords = vitalRecords.slice(0, 3000);
 
   saveJson(VITALS_FILE, vitalRecords);
 
-  console.log(`[SYNC] อุปกรณ์ ${deviceId} -> คนไข้ ${record.patientId} เวลา ${record.timestamp} | HR ${record.heartRate} BP ${record.systolic}/${record.diastolic} SpO2 ${record.spo2} Temp ${record.temperature}`);
+  console.log(`[SYNC] อุปกรณ์ ${deviceId} -> คนไข้ ${record.patientId} เวลา ${record.timestamp}${record.measuredAt ? ' (วัดจริง)' : ' (เวลา server)'} | HR ${record.heartRate} BP ${record.systolic}/${record.diastolic} SpO2 ${record.spo2} Temp ${record.temperature}`);
   res.status(201).json({ success: true, record });
 });
 
