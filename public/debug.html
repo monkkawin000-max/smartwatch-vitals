@@ -59,6 +59,8 @@
   td.val{ font-family:var(--mono); color:var(--teal-deep); font-weight:700; text-align:center; }
   td.hex{ font-family:var(--mono); font-size:9.5px; color:#A8B4B3; }
   td.flag{ text-align:center; }
+  tr.other td{ color:#8A9A99; font-style:italic; }
+  tr.other td.val{ color:#8A9A99; font-weight:400; }
   tr.confirmed{ background:var(--teal-soft); }
   tr.confirmed td.val{ color:var(--teal-deep); }
   .table-wrap{ max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:10px; }
@@ -90,7 +92,7 @@
 </div>
 
 <div class="panel">
-  <h2>บันทึกแพ็กเก็ต</h2>
+  <h2>บันทึกแพ็กเก็ต (ทุกชนิด — ตัวเอียงสีเทา = ไม่ใช่แพ็กเก็ตวัด)</h2>
   <div class="count-row">
     <span class="n">บันทึกไว้แล้ว <b id="rowCount">0</b> รายการ</span>
   </div>
@@ -101,7 +103,7 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th></th><th>วันที่</th><th>เวลามือถือ</th><th>นาฬิกา</th><th>หัวใจ</th><th>เลือด</th><th>SpO2</th><th>Bytes ดิบ</th></tr>
+        <tr><th></th><th>วันที่</th><th>เวลามือถือ</th><th>นาฬิกา</th><th>ชนิด</th><th>หัวใจ</th><th>เลือด</th><th>SpO2</th><th>Bytes ดิบ</th></tr>
       </thead>
       <tbody id="tbody"></tbody>
     </table>
@@ -147,6 +149,7 @@
   const $ = (id) => document.getElementById(id);
   let bleDevice = null;
   let rows = [];         // { date, time, hr, bp, spo2, hex, confirmed } เก็บไว้สำหรับ copy
+  let lastRow = null;    // แถวแพ็กเก็ตวัด (0x0E) ล่าสุดที่ยังไม่ถูกยืนยัน
   let lastRowEl = null;  // DOM ของแถวล่าสุด เผื่อต้องไฮไลต์ตอนยืนยัน
 
   if (!navigator.bluetooth) {
@@ -210,41 +213,52 @@
   function onPacket(event){
     const data = new Uint8Array(event.target.value.buffer);
     const type = data[TYPE_INDEX];
+    const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('-');
+    const is20 = data.length >= PKT_LEN;
+    const isMeasure = is20 && type === TYPE_MEASURE;
 
-    // แพ็กเก็ตวัดค่า — บันทึกลงตารางทุกอันเพื่อความโปร่งใส (ยังไม่ไฮไลต์ว่ายืนยัน)
-    if (data.length >= PKT_LEN && type === TYPE_MEASURE){
-      const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('-');
-      const spo2 = data[IDX_SPO2], sys = data[IDX_SYSTOLIC], dia = data[IDX_DIASTOLIC], hr = data[IDX_HEARTRATE];
+    // บันทึก "ทุกแพ็กเก็ต" ไม่ว่าชนิดไหน (ชนิดอื่นแสดงเป็นตัวเอียงสีเทา — ค่าในช่องหัวใจ/เลือด/SpO2 เป็นแค่ byte ดิบที่ตำแหน่งเดียวกัน อาจไม่มีความหมาย)
+    const row = {
+      date: dateLabel(), time: nowLabel(),
+      clock: isMeasure ? clockLabelFromSec(watchClockSec(data)) : '-',
+      kind: type === undefined ? '?' : '0x' + type.toString(16).padStart(2, '0').toUpperCase() + (isMeasure ? ' วัด' : ''),
+      hr: is20 ? data[IDX_HEARTRATE] : '-',
+      bp: is20 ? `${data[IDX_SYSTOLIC]}/${data[IDX_DIASTOLIC]}` : '-',
+      spo2: is20 ? data[IDX_SPO2] + '%' : '-',
+      hex, confirmed: false, other: !isMeasure,
+    };
+    rows.unshift(row);
+    const el = renderRow(row, true);
+    $('rowCount').textContent = rows.length;
+    $('emptyMsg').style.display = 'none';
 
-      const row = { date: dateLabel(), time: nowLabel(), clock: clockLabelFromSec(watchClockSec(data)), hr, bp: `${sys}/${dia}`, spo2: spo2 + '%', hex, confirmed: false };
-      rows.unshift(row);
-      lastRowEl = renderRow(row, true);
-      $('rowCount').textContent = rows.length;
-      $('emptyMsg').style.display = 'none';
+    if (isMeasure){
+      lastRow = row;
+      lastRowEl = el;
       setStatus('กำลังวัด... (ยังไม่ยืนยันค่า)', 'on');
       return;
     }
 
-    // สัญญาณจบการวัด — ไฮไลต์แถวล่าสุดว่าเป็นค่าที่ยืนยันแล้ว + อัปเดตกล่องตัวเลขใหญ่ด้านบน
-    if (type === TYPE_SESSION_END){
-      if (!rows.length) return;
-      rows[0].confirmed = true;
-      if (lastRowEl){
-        lastRowEl.classList.add('confirmed');
-        lastRowEl.children[0].textContent = '✓';
-      }
-      const r = rows[0];
+    // สัญญาณจบการวัด — ไฮไลต์แถววัดล่าสุดว่าเป็นค่าที่ยืนยันแล้ว + อัปเดตกล่องตัวเลขใหญ่ด้านบน
+    if (type === TYPE_SESSION_END && lastRow){
+      lastRow.confirmed = true;
+      lastRowEl.classList.add('confirmed');
+      lastRowEl.children[0].textContent = '✓';
+      const r = lastRow;
       $('vHR').innerHTML = r.hr + '<span class="u">bpm</span>';
       $('vBP').innerHTML = r.bp + '<span class="u">mmHg</span>';
       $('vSpo2').innerHTML = r.spo2 + '<span class="u">%</span>';
       $('vTime').textContent = r.clock + ' (นาฬิกา)';
+      lastRow = null;
+      lastRowEl = null;
       setStatus(`เชื่อมต่อแล้ว: ${bleDevice.name || 'Smart Watch'}`, 'on');
     }
   }
 
   function renderRow(row, prepend){
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="flag"></td><td class="date">${row.date}</td><td class="time">${row.time}</td><td class="time" style="color:var(--teal-deep);font-weight:700;">${row.clock}</td>` +
+    if (row.other) tr.className = 'other';
+    tr.innerHTML = `<td class="flag"></td><td class="date">${row.date}</td><td class="time">${row.time}</td><td class="time" style="color:var(--teal-deep);font-weight:700;">${row.clock}</td><td class="time">${row.kind}</td>` +
                     `<td class="val">${row.hr}</td><td class="val">${row.bp}</td><td class="val">${row.spo2}</td>` +
                     `<td class="hex">${row.hex}</td>`;
     if (prepend) $('tbody').prepend(tr); else $('tbody').appendChild(tr);
@@ -254,6 +268,7 @@
   $('clearBtn').addEventListener('click', () => {
     if (!confirm('ล้างตารางทั้งหมดใช่ไหม?')) return;
     rows = [];
+    lastRow = null;
     lastRowEl = null;
     $('tbody').innerHTML = '';
     $('rowCount').textContent = '0';
@@ -263,8 +278,8 @@
   $('copyBtn').addEventListener('click', async () => {
     if (rows.length === 0){ alert('ยังไม่มีข้อมูลให้คัดลอก'); return; }
 
-    const header = `BLE Debug Log — Y19PRO\nยืนยัน | วันที่ | เวลามือถือ | เวลานาฬิกา | หัวใจ | เลือด | SpO2 | Bytes ดิบ\n`;
-    const text = header + rows.map(r => `${r.confirmed ? '✓' : ' '} | ${r.date} | ${r.time} | ${r.clock} | ${r.hr} | ${r.bp} | ${r.spo2} | ${r.hex}`).join('\n');
+    const header = `BLE Debug Log — Y19PRO\nยืนยัน | วันที่ | เวลามือถือ | เวลานาฬิกา | ชนิด | หัวใจ | เลือด | SpO2 | Bytes ดิบ\n`;
+    const text = header + rows.map(r => `${r.confirmed ? '✓' : ' '} | ${r.date} | ${r.time} | ${r.clock} | ${r.kind} | ${r.hr} | ${r.bp} | ${r.spo2} | ${r.hex}`).join('\n');
 
     try {
       await navigator.clipboard.writeText(text);
