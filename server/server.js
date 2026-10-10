@@ -359,7 +359,7 @@ app.delete('/api/devices/:patientId', requireRole('it'), (req, res) => {
 
 // ---------- Vital Signs ----------
 
-app.post('/api/vitals', (req, res) => {
+function handleVital(req, res) {
   const { deviceId, heartRate, systolic, diastolic, spo2, temperature, measuredAt } = req.body;
 
   if (!deviceId) {
@@ -417,6 +417,32 @@ app.post('/api/vitals', (req, res) => {
 
   console.log(`[SYNC] อุปกรณ์ ${deviceId} -> คนไข้ ${record.patientId} เวลา ${record.timestamp}${record.measuredAt ? ' (วัดจริง)' : ' (เวลา server)'} | HR ${record.heartRate} BP ${record.systolic}/${record.diastolic} SpO2 ${record.spo2} Temp ${record.temperature}`);
   res.status(201).json({ success: true, record });
+}
+
+// อุปกรณ์/emulator ส่งค่าด้วย deviceId
+app.post('/api/vitals', handleVital);
+
+// คนไข้ที่ล็อกอินอยู่ ส่งค่าจากนาฬิกาของตัวเอง (หน้า vitals.html เชื่อมบลูทูธ)
+// ไม่ต้องส่ง deviceId — ระบบหาจากการผูกอุปกรณ์ที่ IT ลงทะเบียนไว้ให้คนไข้คนนี้
+app.post('/api/vitals/mine', requireRole('patient'), (req, res) => {
+  const pairing = devices.find((dv) => dv.patientId === req.session.user.patientId);
+  if (!pairing) {
+    return res.status(403).json({ error: 'ยังไม่มีนาฬิกาที่ผูกกับบัญชีนี้ กรุณาติดต่อเจ้าหน้าที่ IT เพื่อลงทะเบียนอุปกรณ์' });
+  }
+  req.body = { ...req.body, deviceId: pairing.deviceId };
+  return handleVital(req, res);
+});
+
+// สถานะอุปกรณ์ของคนไข้ที่ล็อกอินอยู่ (ใช้แสดงในการ์ด "เชื่อมต่อนาฬิกา")
+app.get('/api/my-device', requireRole('patient'), (req, res) => {
+  const pid = req.session.user.patientId;
+  const pairing = devices.find((dv) => dv.patientId === pid);
+  const last = vitalRecords.find((r) => r.patientId === pid) || null;
+  res.json({
+    paired: !!pairing,
+    deviceId: pairing ? pairing.deviceId : null,
+    lastRecord: last ? { timestamp: last.timestamp, receivedAt: last.receivedAt || last.timestamp } : null,
+  });
 });
 
 app.get('/api/vitals', (req, res) => {
