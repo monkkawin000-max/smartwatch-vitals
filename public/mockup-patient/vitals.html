@@ -46,6 +46,22 @@
   .empty-box .icon{ font-size:32px; margin-bottom:10px; }
   .empty-box .msg{ font-size:14px; font-weight:700; margin-bottom:6px; }
   .empty-box .hint{ font-size:12.5px; color:var(--ink-dim); }
+
+  .watch-card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px 18px; margin-bottom:16px; }
+  .watch-card h3{ font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-dim); margin:0 0 10px; }
+  .wc-status{ display:flex; align-items:center; gap:8px; font-size:13.5px; font-weight:700; margin-bottom:4px; }
+  .dot{ width:9px; height:9px; border-radius:50%; background:#C4CFCE; flex-shrink:0; }
+  .dot.on{ background:var(--teal); animation:pulse 1.6s infinite; }
+  .dot.err{ background:var(--danger); }
+  @keyframes pulse{ 50%{ opacity:.25; } }
+  .wc-meta{ font-size:12px; color:var(--ink-dim); min-height:16px; margin-bottom:10px; line-height:1.5; }
+  .wc-btn{ width:100%; border:none; border-radius:12px; padding:12px; font-family:var(--sans); font-weight:700; font-size:14px; cursor:pointer; }
+  .wc-btn.primary{ background:var(--teal); color:#fff; }
+  .wc-btn.primary:hover{ background:var(--teal-deep); }
+  .wc-btn.danger{ background:#FDECEC; color:var(--danger); }
+  .wc-btn:disabled{ background:#A9C4C3; color:#fff; cursor:not-allowed; }
+  .wc-hint{ font-size:11.5px; color:var(--ink-dim); margin-top:10px; line-height:1.55; }
+  .wc-warn{ background:#FDF3E3; color:#8A5A0A; border-radius:10px; padding:9px 11px; font-size:12px; line-height:1.5; margin-bottom:10px; display:none; }
 </style>
 </head>
 <body>
@@ -62,6 +78,19 @@
   <div class="wrap">
     <h1>ค่าสุขภาพล่าสุดของฉัน</h1>
     <p class="sub" id="syncSub">กำลังโหลด...</p>
+
+    <div class="watch-card">
+      <h3>เชื่อมต่อ Smart Watch</h3>
+      <div class="wc-warn" id="wcWarn"></div>
+      <div class="wc-status"><span class="dot" id="wcDot"></span><span id="wcText">ยังไม่ได้เชื่อมต่อ</span></div>
+      <div class="wc-meta" id="wcMeta"></div>
+      <button class="wc-btn primary" id="wcConnect">เชื่อมต่อนาฬิกา</button>
+      <button class="wc-btn danger" id="wcDisconnect" style="display:none;">ตัดการเชื่อมต่อ</button>
+      <div class="wc-hint">
+        วิธีใช้: กด "เชื่อมต่อนาฬิกา" → เลือกนาฬิกา → เริ่มวัดที่ตัวนาฬิกา (เมนูวัดหัวใจ) ค่าจะถูกส่งเข้าระบบอัตโนมัติเมื่อวัดเสร็จ<br>
+        ใช้ได้เฉพาะ Chrome บน Android • เปิด Bluetooth และ Location ในมือถือ • ต้องเปิดหน้านี้ค้างไว้ตอนวัด
+      </div>
+    </div>
 
     <div id="emptyBox" class="empty-box" style="display:none;">
       <div class="icon">⌚</div>
@@ -107,6 +136,8 @@
     return false;
   }
 
+  function hasTemp(r){ return r.temperature !== null && r.temperature !== undefined && Number(r.temperature) > 0; }
+
   async function loadVitals(){
     const [vitalsRes, devicesRes] = await Promise.all([
       fetch('/api/vitals/' + encodeURIComponent(myPatientId), { credentials:'include' }),
@@ -141,7 +172,7 @@
       <div class="stat ${isAbnormal('hr',latest)?'abn':'ok'}"><div class="l">Heart Rate</div><div class="v">${latest.heartRate}<span class="u">bpm</span></div></div>
       <div class="stat ${isAbnormal('sys',latest)?'abn':'ok'}"><div class="l">Blood Pressure</div><div class="v">${latest.systolic}/${latest.diastolic}<span class="u">mmHg</span></div></div>
       <div class="stat ${isAbnormal('spo2',latest)?'abn':'ok'}"><div class="l">SpO2</div><div class="v">${latest.spo2}<span class="u">%</span></div></div>
-      <div class="stat ${isAbnormal('temp',latest)?'abn':'ok'}"><div class="l">Temperature</div><div class="v">${latest.temperature}<span class="u">°C</span></div></div>`;
+      <div class="stat ${isAbnormal('temp',latest)?'abn':'ok'}"><div class="l">Temperature</div><div class="v">${hasTemp(latest) ? latest.temperature : '--'}${hasTemp(latest) ? '<span class="u">°C</span>' : ''}</div></div>`;
 
     const recent = [...records].slice(0, 20).reverse(); // เก่า -> ใหม่ สำหรับกราฟ
     const labels = recent.map(r => new Date(r.timestamp).toLocaleTimeString('th-TH', { hour12:false }));
@@ -175,10 +206,208 @@
     }
   }
 
+  // =====================================================================
+  //  เชื่อมต่อ Smart Watch (Y19PRO) ผ่าน Web Bluetooth — ส่งค่าเข้าบัญชีของคนที่ล็อกอินอยู่
+  // =====================================================================
+  const SERVICE_UUID = '6e400801-b5a3-f393-e0a9-e50e24dcca9d';
+  const NOTIFY_UUID  = '6e400003-b5a3-f393-e0a9-e50e24dcca9d';
+  const PKT_LEN = 20, TYPE_INDEX = 5, TYPE_MEASURE = 0x0E, TYPE_SESSION_END = 0x05;
+  const IDX_SPO2 = 16, IDX_SYSTOLIC = 17, IDX_DIASTOLIC = 18, IDX_HEARTRATE = 19;
+
+  let bleDevice = null;
+  let pending = null;       // แพ็กเก็ตวัดล่าสุดที่ยังไม่ยืนยัน (รอสัญญาณจบการวัด)
+  let outbox = [];          // ค่าที่ยืนยันแล้วแต่ยังส่งไม่สำเร็จ
+  let sending = false;
+  let wakeLock = null;
+  let deviceInfo = { paired: false, deviceId: null, lastRecord: null };
+
+  function wcStatus(text, state){
+    $('wcText').textContent = text;
+    $('wcDot').className = 'dot' + (state ? ' ' + state : '');
+  }
+  function wcMeta(text){ $('wcMeta').textContent = text; }
+
+  // ----- ถอดเวลาจากแพ็กเก็ต: byte 13-15 = วินาทีนับจากเที่ยงคืนตามนาฬิกา (big-endian 24 บิต) -----
+  function watchClockSec(d){
+    if (d.length < 16) return null;
+    const sec = (d[13] << 16) | (d[14] << 8) | d[15];
+    return sec < 86400 ? sec : null;
+  }
+  function clockLabelFromSec(sec){
+    if (sec === null) return '--:--:--';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${p(Math.floor(sec/3600))}:${p(Math.floor(sec%3600/60))}:${p(sec%60)}`;
+  }
+  function watchDateFromSec(sec){
+    if (sec === null) return null;
+    const now = new Date();
+    let t = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() + sec * 1000;
+    const diff = t - now.getTime();
+    if (diff > 12*3600*1000) t -= 86400*1000;
+    else if (diff < -12*3600*1000) t += 86400*1000;
+    return new Date(t);
+  }
+
+  // ----- สถานะการผูกอุปกรณ์ (IT เป็นคนผูก) -----
+  async function loadDeviceStatus(){
+    try {
+      const res = await fetch('/api/my-device', { credentials:'include' });
+      if (!res.ok) return;
+      deviceInfo = await res.json();
+    } catch (e) { return; }
+
+    const connected = bleDevice && bleDevice.gatt && bleDevice.gatt.connected;
+    if (!deviceInfo.paired){
+      $('wcConnect').disabled = true;
+      if (!connected){
+        wcStatus('ยังไม่ได้ผูกนาฬิกากับบัญชีนี้', 'err');
+        wcMeta('กรุณาติดต่อเจ้าหน้าที่ IT เพื่อลงทะเบียนอุปกรณ์ก่อน');
+      }
+    } else if (navigator.bluetooth){
+      $('wcConnect').disabled = false;
+      if (!connected && !$('wcText').textContent.startsWith('เชื่อมต่อไม่สำเร็จ') && !outbox.length){
+        wcStatus('ยังไม่ได้เชื่อมต่อ', '');
+        const last = deviceInfo.lastRecord;
+        wcMeta(`อุปกรณ์ที่ผูกไว้: ${deviceInfo.deviceId}` + (last ? ` • ค่าล่าสุดในระบบ: ${new Date(last.timestamp).toLocaleString('th-TH')}` : ' • ยังไม่มีข้อมูล'));
+      }
+    }
+  }
+
+  if (!navigator.bluetooth){
+    $('wcWarn').style.display = 'block';
+    $('wcWarn').innerHTML = 'เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth — ใช้ <b>Chrome บน Android</b> เท่านั้น (iPhone/Safari และเบราว์เซอร์อื่นใช้ไม่ได้)';
+    $('wcConnect').disabled = true;
+  }
+
+  async function keepScreenOn(){
+    try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && bleDevice && bleDevice.gatt && bleDevice.gatt.connected) keepScreenOn();
+  });
+
+  $('wcConnect').addEventListener('click', async () => {
+    try {
+      wcStatus('กำลังค้นหานาฬิกา...', 'on');
+      wcMeta('เลือกนาฬิกา (ชื่อขึ้นต้นด้วย Y19PRO) ในหน้าต่างที่เด้งขึ้นมา');
+      bleDevice = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: 'Y19PRO' }],
+        optionalServices: [SERVICE_UUID],
+      });
+      bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+      wcStatus('กำลังเชื่อมต่อ...', 'on');
+      const server  = await bleDevice.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      const notifyChar = await service.getCharacteristic(NOTIFY_UUID);
+      await notifyChar.startNotifications();
+      notifyChar.addEventListener('characteristicvaluechanged', onPacket);
+
+      pending = null;
+      wcStatus(`เชื่อมต่อแล้ว: ${bleDevice.name || 'Smart Watch'}`, 'on');
+      wcMeta('เริ่มวัดที่ตัวนาฬิกา แล้วรอจนวัดเสร็จ ค่าจะถูกส่งเข้าระบบอัตโนมัติ');
+      $('wcConnect').style.display = 'none';
+      $('wcDisconnect').style.display = 'block';
+      keepScreenOn();
+    } catch (err) {
+      wcStatus('เชื่อมต่อไม่สำเร็จ: ' + err.message, 'err');
+      wcMeta('ลองใหม่อีกครั้ง — ตรวจสอบว่าเปิด Bluetooth/Location และนาฬิกาไม่ได้ต่อกับแอปอื่นอยู่');
+    }
+  });
+
+  $('wcDisconnect').addEventListener('click', () => {
+    if (bleDevice && bleDevice.gatt && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
+  });
+
+  function onDisconnected(){
+    pending = null;
+    wcStatus('ตัดการเชื่อมต่อแล้ว', 'err');
+    wcMeta(outbox.length ? 'มีค่าที่ยังส่งไม่สำเร็จ จะส่งใหม่เมื่อมีการวัดครั้งต่อไป' : 'กด "เชื่อมต่อนาฬิกา" เพื่อเชื่อมใหม่');
+    $('wcConnect').style.display = 'block';
+    $('wcDisconnect').style.display = 'none';
+    try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {}
+  }
+
+  // ค่าระหว่างวัดไม่นิ่ง — เก็บไว้เป็น pending ก่อน แล้วค่อยยืนยันเมื่อนาฬิกาส่งสัญญาณจบการวัด (0x05)
+  function onPacket(event){
+    const data = new Uint8Array(event.target.value.buffer);
+    const type = data[TYPE_INDEX];
+
+    if (data.length >= PKT_LEN && type === TYPE_MEASURE){
+      const spo2 = data[IDX_SPO2], systolic = data[IDX_SYSTOLIC], diastolic = data[IDX_DIASTOLIC], heartRate = data[IDX_HEARTRATE];
+      // กรองค่าที่เป็นไปไม่ได้ทางสรีรวิทยา
+      if (heartRate < 30 || heartRate > 220) return;
+      if (spo2 < 70 || spo2 > 100) return;
+      if (systolic < 60 || systolic > 250) return;
+      if (diastolic < 30 || diastolic > 150) return;
+
+      const sec = watchClockSec(data);
+      const wd = watchDateFromSec(sec);
+      pending = { heartRate, systolic, diastolic, spo2, clockLabel: clockLabelFromSec(sec), measuredAt: wd ? wd.toISOString() : null };
+      wcStatus('กำลังวัด... (รอให้วัดเสร็จ)', 'on');
+      wcMeta('อย่าปิดหน้านี้จนกว่านาฬิกาจะวัดเสร็จ');
+      return;
+    }
+
+    if (type === TYPE_SESSION_END){
+      if (!pending) return;
+      const confirmed = pending;
+      pending = null;
+      wcStatus(`เชื่อมต่อแล้ว: ${bleDevice && bleDevice.name ? bleDevice.name : 'Smart Watch'}`, 'on');
+      wcMeta(`วัดล่าสุด: HR ${confirmed.heartRate} • BP ${confirmed.systolic}/${confirmed.diastolic} • SpO2 ${confirmed.spo2}% (เวลานาฬิกา ${confirmed.clockLabel}) — กำลังส่งเข้าระบบ...`);
+      outbox.push(confirmed);
+      if (outbox.length > 50) outbox.shift();
+      flushOutbox();
+    }
+  }
+
+  // ส่งค่าที่ยืนยันแล้วเข้าบัญชีของตัวเอง (ทีละรายการ ตามลำดับ)
+  async function flushOutbox(){
+    if (sending) return;
+    sending = true;
+    try {
+      while (outbox.length){
+        const r = outbox[0];
+        let res, data;
+        try {
+          res = await fetch('/api/vitals/mine', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              heartRate: r.heartRate, systolic: r.systolic, diastolic: r.diastolic, spo2: r.spo2,
+              temperature: null, // นาฬิการุ่นนี้ไม่มีเซนเซอร์อุณหภูมิ
+              measuredAt: r.measuredAt,
+            }),
+          });
+          data = await res.json();
+        } catch (err) {
+          wcMeta('ส่งไม่สำเร็จ: เชื่อมต่อ server ไม่ได้ (จะส่งใหม่ตอนวัดครั้งต่อไป)');
+          break;
+        }
+        if (res.status === 401){ window.location.href = 'login.html'; return; }
+        if (!res.ok){
+          wcMeta('ส่งไม่สำเร็จ: ' + (data.error || ('HTTP ' + res.status)));
+          if (res.status >= 500) break;
+          outbox.shift();
+          continue;
+        }
+        outbox.shift();
+        wcMeta(`ส่งเข้าระบบแล้ว ✓ HR ${r.heartRate} • BP ${r.systolic}/${r.diastolic} • SpO2 ${r.spo2}% (เวลานาฬิกา ${r.clockLabel})`);
+        loadVitals();       // รีเฟรชตัวเลขและกราฟทันที
+        loadDeviceStatus();
+      }
+    } finally {
+      sending = false;
+    }
+  }
+
   (async function init(){
     await checkAuth();
     await loadVitals();
+    await loadDeviceStatus();
     setInterval(loadVitals, 5000); // อัปเดตอัตโนมัติทุก 5 วินาที เหมือนหน้า Dashboard ของหมอ
+    setInterval(loadDeviceStatus, 15000);
   })();
 </script>
 </body>
