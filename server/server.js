@@ -39,25 +39,29 @@ function statelessSession({ secret, cookieName = 'sw_session', maxAgeMs = 8 * 60
     return null;
   }
 
+  // คืนค่า { payload, reason } — reason ใช้ดูสาเหตุใน log ตอนหาว่าทำไมถึงหลุดจากระบบ
   function decode(raw) {
-    if (!raw) return null;
+    if (!raw) return { payload: null, reason: 'no-cookie' };
     const dot = raw.lastIndexOf('.');
-    if (dot < 1) return null;
+    if (dot < 1) return { payload: null, reason: 'malformed' };
     const b64 = raw.slice(0, dot);
     const given = Buffer.from(raw.slice(dot + 1));
     const expected = Buffer.from(sign(b64));
-    if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
+    if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return { payload: null, reason: 'bad-signature' };
     try {
       const payload = JSON.parse(Buffer.from(b64, 'base64url').toString('utf8'));
-      if (!payload || !payload.exp || payload.exp < Date.now()) return null;
-      return payload;
+      if (!payload || !payload.exp) return { payload: null, reason: 'malformed' };
+      if (payload.exp < Date.now()) return { payload: null, reason: 'expired' };
+      return { payload, reason: 'ok' };
     } catch (e) {
-      return null;
+      return { payload: null, reason: 'malformed' };
     }
   }
 
   return (req, res, next) => {
-    const payload = decode(readCookie(req));
+    const decoded = decode(readCookie(req));
+    const payload = decoded.payload;
+    req.sessionReason = decoded.reason;
     const session = {};
     Object.defineProperty(session, 'destroy', {
       enumerable: false,
@@ -130,9 +134,11 @@ if (patientsMigrated) saveJson(PATIENTS_FILE, patients);
 function requireRole(...allowedRoles) {
   return (req, res, next) => {
     if (!req.session || !req.session.user) {
+      console.log(`[AUTH] ${req.method} ${req.path} ปฏิเสธ 401 reason=${req.sessionReason}`);
       return res.status(401).json({ error: 'กรุณาเข้าสู่ระบบก่อน' });
     }
     if (!allowedRoles.includes(req.session.user.role)) {
+      console.log(`[AUTH] ${req.method} ${req.path} ปฏิเสธ 403 role=${req.session.user.role} (ต้องเป็น ${allowedRoles.join('/')})`);
       return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงส่วนนี้' });
     }
     next();
@@ -229,9 +235,13 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/me', (req, res) => {
+  const referer = (req.headers.referer || '').replace(/^https?:\/\/[^/]+/, '') || '-';
   if (req.session && req.session.user) {
+    console.log(`[AUTH] me ok role=${req.session.user.role} จากหน้า ${referer}`);
     return res.json({ loggedIn: true, user: req.session.user });
   }
+  // ถ้ามีบรรทัดนี้ใน log = เซิร์ฟเวอร์บอกหน้าเว็บว่า "ยังไม่ได้ล็อกอิน" (reason บอกสาเหตุ)
+  console.log(`[AUTH] me NOT-LOGGED-IN reason=${req.sessionReason} จากหน้า ${referer}`);
   res.json({ loggedIn: false });
 });
 
