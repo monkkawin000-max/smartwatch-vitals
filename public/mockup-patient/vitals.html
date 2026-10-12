@@ -55,6 +55,12 @@
   .dot.err{ background:var(--danger); }
   @keyframes pulse{ 50%{ opacity:.25; } }
   .wc-meta{ font-size:12px; color:var(--ink-dim); min-height:16px; margin-bottom:10px; line-height:1.5; }
+  .live-box{ background:#F4F8F7; border:1px dashed #B9CFCB; border-radius:12px; padding:10px 12px; margin-bottom:12px; }
+  .live-head{ display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px; font-weight:700; color:var(--teal-deep); margin-bottom:8px; }
+  .live-tag{ font-size:10.5px; font-weight:400; color:var(--ink-dim); }
+  .live-row{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .live-row .l{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-dim); }
+  .live-row .v{ font-family:var(--mono); font-size:19px; font-weight:700; color:var(--ink-dim); }
   .wc-btn{ width:100%; border:none; border-radius:12px; padding:12px; font-family:var(--sans); font-weight:700; font-size:14px; cursor:pointer; }
   .wc-btn.primary{ background:var(--teal); color:#fff; }
   .wc-btn.primary:hover{ background:var(--teal-deep); }
@@ -84,6 +90,14 @@
       <div class="wc-warn" id="wcWarn"></div>
       <div class="wc-status"><span class="dot" id="wcDot"></span><span id="wcText">ยังไม่ได้เชื่อมต่อ</span></div>
       <div class="wc-meta" id="wcMeta"></div>
+      <div class="live-box" id="liveBox" style="display:none;">
+        <div class="live-head"><span id="liveTitle">กำลังวัด...</span><span class="live-tag">ค่าชั่วคราวระหว่างวัด — ยังไม่ใช่ผลสุดท้าย</span></div>
+        <div class="live-row">
+          <div><div class="l">Heart Rate</div><div class="v" id="liveHR">--</div></div>
+          <div><div class="l">BP</div><div class="v" id="liveBP">--/--</div></div>
+          <div><div class="l">SpO2</div><div class="v" id="liveSpo2">--</div></div>
+        </div>
+      </div>
       <button class="wc-btn primary" id="wcConnect">เชื่อมต่อนาฬิกา</button>
       <button class="wc-btn danger" id="wcDisconnect" style="display:none;">ตัดการเชื่อมต่อ</button>
       <div class="wc-hint">
@@ -219,6 +233,8 @@
   let outbox = [];          // ค่าที่ยืนยันแล้วแต่ยังส่งไม่สำเร็จ
   let sending = false;
   let wakeLock = null;
+  let measureStart = null;  // เวลาที่เริ่มได้รับแพ็กเก็ตของรอบวัดนี้
+  let lastPacketAt = 0;
   let deviceInfo = { paired: false, deviceId: null, lastRecord: null };
 
   function wcStatus(text, state){
@@ -247,6 +263,30 @@
     else if (diff < -12*3600*1000) t += 86400*1000;
     return new Date(t);
   }
+
+  // ----- แสดงค่าสดระหว่างวัด (ชั่วคราว ไม่ส่งเข้าระบบ ไม่ใช่ผลสุดท้าย) -----
+  function showLive(hr, sys, dia, spo2){
+    lastPacketAt = Date.now();
+    if (!measureStart) measureStart = lastPacketAt;
+    $('liveHR').textContent = hr;
+    $('liveBP').textContent = sys + '/' + dia;
+    $('liveSpo2').textContent = spo2 + '%';
+    $('liveBox').style.display = 'block';
+    tickLive();
+  }
+  function tickLive(){
+    if (!measureStart) return;
+    $('liveTitle').textContent = `กำลังวัด… ${Math.round((Date.now() - measureStart) / 1000)} วินาที`;
+  }
+  function hideLive(){
+    measureStart = null;
+    $('liveBox').style.display = 'none';
+  }
+  setInterval(() => {
+    if (!measureStart) return;
+    if (Date.now() - lastPacketAt > 20000) hideLive(); // ไม่มีแพ็กเก็ตใหม่เกิน 20 วินาที = รอบนี้น่าจะถูกยกเลิก
+    else tickLive();
+  }, 1000);
 
   // ----- สถานะการผูกอุปกรณ์ (IT เป็นคนผูก) -----
   async function loadDeviceStatus(){
@@ -321,6 +361,7 @@
 
   function onDisconnected(){
     pending = null;
+    hideLive();
     wcStatus('ตัดการเชื่อมต่อแล้ว', 'err');
     wcMeta(outbox.length ? 'มีค่าที่ยังส่งไม่สำเร็จ จะส่งใหม่เมื่อมีการวัดครั้งต่อไป' : 'กด "เชื่อมต่อนาฬิกา" เพื่อเชื่อมใหม่');
     $('wcConnect').style.display = 'block';
@@ -343,6 +384,7 @@
 
       const sec = watchClockSec(data);
       const wd = watchDateFromSec(sec);
+      showLive(heartRate, systolic, diastolic, spo2);
       pending = { heartRate, systolic, diastolic, spo2, clockLabel: clockLabelFromSec(sec), measuredAt: wd ? wd.toISOString() : null };
       wcStatus('กำลังวัด... (รอให้วัดเสร็จ)', 'on');
       wcMeta('อย่าปิดหน้านี้จนกว่านาฬิกาจะวัดเสร็จ');
@@ -353,6 +395,7 @@
       if (!pending) return;
       const confirmed = pending;
       pending = null;
+      hideLive();
       wcStatus(`เชื่อมต่อแล้ว: ${bleDevice && bleDevice.name ? bleDevice.name : 'Smart Watch'}`, 'on');
       wcMeta(`วัดล่าสุด: HR ${confirmed.heartRate} • BP ${confirmed.systolic}/${confirmed.diastolic} • SpO2 ${confirmed.spo2}% (เวลานาฬิกา ${confirmed.clockLabel}) — กำลังส่งเข้าระบบ...`);
       outbox.push(confirmed);
