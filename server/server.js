@@ -3,7 +3,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
-const session = require('express-session');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,16 +21,75 @@ const DEVICES_FILE = path.join(__dirname, 'devices.json'); // ← ใหม่: 
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
+// ---------- Session แบบเก็บในคุกกี้ (เซ็นรับรองด้วย HMAC) ----------
+// เดิมเก็บ session ไว้ในหน่วยความจำของเซิร์ฟเวอร์ → Render ฟรีหลับ/รีสตาร์ต/Deploy แล้วทุกคนหลุดกลับหน้าล็อกอิน
+// แบบนี้ข้อมูล session อยู่ในคุกกี้ของผู้ใช้เอง (แก้ไขไม่ได้เพราะมีลายเซ็น) เซิร์ฟเวอร์รีสตาร์ตแล้วยังล็อกอินอยู่
+// ใช้งานเหมือนเดิม: req.session.user = {...}, req.session.destroy(cb)
+function statelessSession({ secret, cookieName = 'sw_session', maxAgeMs = 8 * 60 * 60 * 1000 }) {
+  const sign = (b64) => crypto.createHmac('sha256', secret).update(b64).digest('base64url');
+
+  function readCookie(req) {
+    const header = req.headers.cookie;
+    if (!header) return null;
+    for (const part of header.split(';')) {
+      const i = part.indexOf('=');
+      if (i < 0) continue;
+      if (part.slice(0, i).trim() === cookieName) return part.slice(i + 1).trim();
+    }
+    return null;
+  }
+
+  function decode(raw) {
+    if (!raw) return null;
+    const dot = raw.lastIndexOf('.');
+    if (dot < 1) return null;
+    const b64 = raw.slice(0, dot);
+    const given = Buffer.from(raw.slice(dot + 1));
+    const expected = Buffer.from(sign(b64));
+    if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
+    try {
+      const payload = JSON.parse(Buffer.from(b64, 'base64url').toString('utf8'));
+      if (!payload || !payload.exp || payload.exp < Date.now()) return null;
+      return payload;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  return (req, res, next) => {
+    const payload = decode(readCookie(req));
+    const session = {};
+    Object.defineProperty(session, 'destroy', {
+      enumerable: false,
+      value(cb) { delete session.user; if (cb) cb(); },
+    });
+    if (payload && payload.user) session.user = payload.user;
+    req.session = session;
+
+    const before = JSON.stringify(session.user || null);
+    const origWriteHead = res.writeHead;
+    res.writeHead = function (...args) {
+      if (!res.headersSent) {
+        const after = JSON.stringify(session.user || null);
+        if (after !== before) {
+          const secure = req.secure ? '; Secure' : '';
+          if (session.user) {
+            const b64 = Buffer.from(JSON.stringify({ user: session.user, exp: Date.now() + maxAgeMs })).toString('base64url');
+            res.append('Set-Cookie', `${cookieName}=${b64}.${sign(b64)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(maxAgeMs / 1000)}${secure}`);
+          } else {
+            res.append('Set-Cookie', `${cookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`);
+          }
+        }
+      }
+      return origWriteHead.apply(this, args);
+    };
+    next();
+  };
+}
+
 app.use(
-  session({
+  statelessSession({
     secret: process.env.SESSION_SECRET || 'smartwatch-vitals-dev-secret-เปลี่ยนก่อน-deploy',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      maxAge: 1000 * 60 * 60 * 8,
-      secure: process.env.NODE_ENV === 'production',
-    },
   })
 );
 
@@ -164,7 +223,7 @@ app.post('/api/auth/login/it', async (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   req.session.destroy((err) => {
     if (err) return res.status(500).json({ error: 'ออกจากระบบไม่สำเร็จ' });
-    res.clearCookie('connect.sid');
+    res.clearCookie('connect.sid'); // (ชื่อเก่า เผื่อเบราว์เซอร์ยังมีคุกกี้ค้าง) คุกกี้ใหม่ sw_session ถูกล้างอัตโนมัติ
     res.json({ success: true });
   });
 });
