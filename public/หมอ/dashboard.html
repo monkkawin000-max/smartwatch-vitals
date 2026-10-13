@@ -62,6 +62,37 @@
   .chart-card h3{ font-size:12px; text-transform:uppercase; color:var(--ink-dim); margin:0 0 8px; }
   .chart-card canvas{ max-height:170px; }
   .no-data{ text-align:center; color:var(--ink-dim); font-size:13px; padding: 60px 20px; background:var(--card); border:1px solid var(--line); border-radius:16px; }
+
+  /* ===== ระดับการแจ้งเตือนต่อคนไข้: เขียว = ปกติ, เหลือง ! = ผิดปกติเล็กน้อย, แดง !! = ผิดปกติมาก ===== */
+  .p-card{ border-width:1.5px; }
+  .p-card.lvl0{ border-color:#3FA796; }
+  .p-card.lvl1{ border-color:#E8A33D; background:#FFFBF2; }
+  .p-card.lvl2{ border-color:#D64545; background:#FFF6F6; }
+  .p-card.nodata{ border-color:var(--line); }
+  .p-card.active.lvl0{ box-shadow:0 0 0 3px #D3EBE6; }
+  .p-card.active.lvl1{ box-shadow:0 0 0 3px #FBE7C2; }
+  .p-card.active.lvl2{ box-shadow:0 0 0 3px #F6CACA; }
+  .p-top{ display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .flag{ min-width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+         font-weight:800; font-size:20px; color:#fff; padding:0 8px; flex-shrink:0; letter-spacing:-1px; }
+  .flag.f1{ background:#E8A33D; }
+  .flag.f2{ background:#D64545; animation:flagpulse 1.4s infinite; }
+  @keyframes flagpulse{ 50%{ transform:scale(1.12); } }
+  .p-mini .v.warn{ color:#C47F0A; }
+  .stat .v.warn{ color:#C47F0A; }
+  .p-alert{ margin-top:8px; border-radius:8px; padding:6px 9px; font-size:11.5px; line-height:1.45; }
+  .p-alert b{ display:block; }
+  .p-alert.a1, .alert-bar.a1{ background:#FDF3E3; color:#8A5A0A; }
+  .p-alert.a2, .alert-bar.a2{ background:#FDECEC; color:#B02F2F; }
+  .alert-bar{ display:flex; align-items:center; gap:12px; border-radius:12px; padding:10px 14px; margin-bottom:14px; font-size:13px; line-height:1.5; }
+  .alert-bar .flag{ min-width:44px; height:44px; font-size:22px; }
+  .alert-bar b{ display:block; font-size:14px; }
+  .p-card .time .stale{ color:#B07A1B; font-weight:700; }
+  .alert-summary{ margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; font-size:12.5px; }
+  .alert-summary .pill{ padding:5px 12px; border-radius:999px; font-weight:700; }
+  .alert-summary .pill.p2{ background:#FDECEC; color:#B02F2F; }
+  .alert-summary .pill.p1{ background:#FDF3E3; color:#8A5A0A; }
+  .alert-summary .pill.p0{ background:#E3F3EF; color:#1F7A68; }
 </style>
 </head>
 <body>
@@ -79,6 +110,7 @@
   <div class="top">
     <h1>Doctor Dashboard</h1>
     <p class="sub">ค่า Vital Signs และแนวโน้มของคนไข้แต่ละคน</p>
+    <div class="alert-summary" id="alertSummary"></div>
   </div>
 
   <div class="wrap">
@@ -87,6 +119,7 @@
       <div class="headline">
         <div class="pid" id="dPid">—</div>
         <div class="name" id="dName">—</div>
+        <div class="alert-bar" id="dAlert" style="display:none;"></div>
         <div class="stat-row">
           <div class="stat"><div class="l">Heart Rate</div><div class="v" id="dHR">--<span class="u">bpm</span></div></div>
           <div class="stat"><div class="l">Blood Pressure</div><div class="v" id="dBP">--/--<span class="u">mmHg</span></div></div>
@@ -123,13 +156,39 @@
     window.location.href = 'login.html';
   });
 
-  function isAbnormal(field, r){
-    if (!r.hasData) return false;
-    if (field === 'hr') return r.heartRate < 50 || r.heartRate > 120;
-    if (field === 'sys') return r.systolic > 160 || r.systolic < 90;
-    if (field === 'spo2') return r.spo2 < 92;
-    if (field === 'temp') return r.temperature > 38.5;
-    return false;
+  // ----- เกณฑ์ระดับการแจ้งเตือน (ค่าตั้งต้นตัวอย่าง — ปรับตามแพทย์ได้) -----
+  // 0 = ปกติ, 1 = ผิดปกติเล็กน้อย (เหลือง !), 2 = ผิดปกติมาก (แดง !!)
+  function hasTemp(r){ return r && r.temperature !== null && r.temperature !== undefined && Number(r.temperature) > 0; }
+
+  function levelOf(field, r){
+    if (!r || !r.hasData) return 0;
+    if (field === 'hr'){ const v = r.heartRate; if (v < 50 || v > 120) return 2; if (v < 60 || v > 100) return 1; return 0; }
+    if (field === 'sys'){ const v = r.systolic; if (v < 90 || v > 160) return 2; if (v < 100 || v > 140) return 1; return 0; }
+    if (field === 'spo2'){ const v = r.spo2; if (v < 92) return 2; if (v < 95) return 1; return 0; }
+    if (field === 'temp'){ if (!hasTemp(r)) return 0; const v = Number(r.temperature); if (v > 38.5) return 2; if (v >= 37.5) return 1; return 0; }
+    return 0;
+  }
+  function cls(field, r){ const l = levelOf(field, r); return l === 2 ? 'abn' : (l === 1 ? 'warn' : ''); }
+
+  // รายการค่าที่ผิดปกติ พร้อมข้อความ เช่น "SpO2 ต่ำเล็กน้อย (93%)"
+  function issuesOf(r){
+    const out = [];
+    let l;
+    if ((l = levelOf('hr', r)))   out.push({ level:l, text:`HR ${r.heartRate < 60 ? 'ต่ำ' : 'สูง'}${l === 2 ? 'มาก' : 'เล็กน้อย'} (${r.heartRate} bpm)` });
+    if ((l = levelOf('sys', r)))  out.push({ level:l, text:`ความดัน${r.systolic < 100 ? 'ต่ำ' : 'สูง'}${l === 2 ? 'มาก' : 'เล็กน้อย'} (${r.systolic}/${r.diastolic})` });
+    if ((l = levelOf('spo2', r))) out.push({ level:l, text:`SpO2 ต่ำ${l === 2 ? 'มาก' : 'เล็กน้อย'} (${r.spo2}%)` });
+    if ((l = levelOf('temp', r))) out.push({ level:l, text:`อุณหภูมิสูง${l === 2 ? 'มาก' : 'เล็กน้อย'} (${r.temperature}°C)` });
+    return out;
+  }
+  function patientLevel(r){
+    if (!r || !r.hasData) return -1; // ยังไม่มีข้อมูล
+    return issuesOf(r).reduce((m, x) => Math.max(m, x.level), 0);
+  }
+  const LEVEL_TITLE = { 1:'ค่าผิดปกติเล็กน้อย — ควรเฝ้าสังเกต', 2:'ผิดปกติมาก — ควรรีบตรวจสอบ' };
+
+  function staleDays(r){
+    const d = (Date.now() - new Date(r.timestamp).getTime()) / 86400000;
+    return d >= 1 ? Math.floor(d) : 0;
   }
 
   async function loadPatientList(){
@@ -139,26 +198,48 @@
     if (!data.length){
       $('patientList').innerHTML = '<div class="empty-list">ยังไม่มีคนไข้ในระบบ</div>';
       $('detail').style.display = 'none';
+      $('alertSummary').innerHTML = '';
       return;
     }
 
+    // เรียงคนไข้ที่ต้องดูก่อนขึ้นบน: แดง > เหลือง > ปกติ > ยังไม่มีข้อมูล
+    data.sort((a, b) => (patientLevel(b) - patientLevel(a)) || String(a.patientId).localeCompare(String(b.patientId)));
+
     if (!selectedPatientId) selectedPatientId = data[0].patientId;
 
-    $('patientList').innerHTML = data.map(r => `
-      <div class="p-card ${r.patientId === selectedPatientId ? 'active' : ''}" data-pid="${r.patientId}">
-        <div class="pid">${r.patientId}</div>
-        <div class="name">${r.patientName}</div>
+    // สรุปด้านบน (นับเฉพาะคนไข้ที่มีข้อมูลล่าสุดไม่เกิน 1 วัน)
+    const fresh = data.filter(r => r.hasData && !staleDays(r));
+    const n2 = fresh.filter(r => patientLevel(r) === 2).length;
+    const n1 = fresh.filter(r => patientLevel(r) === 1).length;
+    $('alertSummary').innerHTML = (n2 || n1)
+      ? (n2 ? `<span class="pill p2">!! ผิดปกติมาก ${n2} คน</span>` : '') + (n1 ? `<span class="pill p1">! เฝ้าสังเกต ${n1} คน</span>` : '')
+      : `<span class="pill p0">✓ ไม่มีคนไข้ที่ค่าผิดปกติ</span>`;
+
+    $('patientList').innerHTML = data.map(r => {
+      const lv = patientLevel(r);
+      const issues = lv > 0 ? issuesOf(r) : [];
+      const sd = r.hasData ? staleDays(r) : 0;
+      return `
+      <div class="p-card ${lv < 0 ? 'nodata' : 'lvl' + lv} ${r.patientId === selectedPatientId ? 'active' : ''}" data-pid="${r.patientId}">
+        <div class="p-top">
+          <div>
+            <div class="pid">${r.patientId}</div>
+            <div class="name">${r.patientName}</div>
+          </div>
+          ${lv > 0 ? `<div class="flag f${lv}" title="${LEVEL_TITLE[lv]}">${lv === 2 ? '!!' : '!'}</div>` : ''}
+        </div>
         ${r.hasData ? `
         <div class="p-mini">
-          <div><div class="v ${isAbnormal('hr',r)?'abn':''}">${r.heartRate}</div><div class="l">HR</div></div>
-          <div><div class="v ${isAbnormal('sys',r)?'abn':''}">${r.systolic}/${r.diastolic}</div><div class="l">BP</div></div>
-          <div><div class="v ${isAbnormal('spo2',r)?'abn':''}">${r.spo2}%</div><div class="l">SpO2</div></div>
-          <div><div class="v ${isAbnormal('temp',r)?'abn':''}">${r.temperature}°</div><div class="l">Temp</div></div>
+          <div><div class="v ${cls('hr',r)}">${r.heartRate}</div><div class="l">HR</div></div>
+          <div><div class="v ${cls('sys',r)}">${r.systolic}/${r.diastolic}</div><div class="l">BP</div></div>
+          <div><div class="v ${cls('spo2',r)}">${r.spo2}%</div><div class="l">SpO2</div></div>
+          <div><div class="v ${cls('temp',r)}">${hasTemp(r) ? r.temperature + '°' : '--'}</div><div class="l">Temp</div></div>
         </div>
-        <div class="time">${new Date(r.timestamp).toLocaleString('th-TH')}</div>
+        ${lv > 0 ? `<div class="p-alert a${lv}"><b>${LEVEL_TITLE[lv]}</b>${issues.map(x => x.text).join(' • ')}</div>` : ''}
+        <div class="time">${new Date(r.timestamp).toLocaleString('th-TH')}${sd ? ` <span class="stale">· ข้อมูลเก่า ${sd} วัน</span>` : ''}</div>
         ` : `<div class="time">ยังไม่มีข้อมูล Vital Signs</div>`}
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
 
     $('patientList').querySelectorAll('.p-card').forEach(el => {
       el.addEventListener('click', () => { selectedPatientId = el.dataset.pid; loadPatientList(); loadDetail(); });
@@ -205,6 +286,7 @@
     if (!records.length){
       $('chartGrid').style.display = 'none';
       $('noDataMsg').style.display = 'block';
+      $('dAlert').style.display = 'none';
       $('dPid').textContent = selectedPatientId;
       const patients = await (await fetch('/api/patients', { credentials:'include' })).json();
       const p = patients.find(x => x.patientId === selectedPatientId);
@@ -217,17 +299,28 @@
 
     records = records.slice(0, 20).reverse();
     const latest = records[records.length - 1];
+    const lr = { ...latest, hasData: true };
 
     $('dPid').textContent = latest.patientId;
     $('dName').textContent = latest.patientName;
     $('dHR').innerHTML = latest.heartRate + '<span class="u">bpm</span>';
-    $('dHR').className = 'v' + (isAbnormal('hr',latest)?' abn':'');
+    $('dHR').className = 'v ' + cls('hr', lr);
     $('dBP').innerHTML = latest.systolic + '/' + latest.diastolic + '<span class="u">mmHg</span>';
-    $('dBP').className = 'v' + (isAbnormal('sys',latest)?' abn':'');
+    $('dBP').className = 'v ' + cls('sys', lr);
     $('dSpo2').innerHTML = latest.spo2 + '<span class="u">%</span>';
-    $('dSpo2').className = 'v' + (isAbnormal('spo2',latest)?' abn':'');
-    $('dTemp').innerHTML = latest.temperature + '<span class="u">°C</span>';
-    $('dTemp').className = 'v' + (isAbnormal('temp',latest)?' abn':'');
+    $('dSpo2').className = 'v ' + cls('spo2', lr);
+    $('dTemp').innerHTML = hasTemp(latest) ? latest.temperature + '<span class="u">°C</span>' : '--';
+    $('dTemp').className = 'v ' + cls('temp', lr);
+
+    // แถบแจ้งเตือนของคนไข้ที่เลือก
+    const lv = patientLevel(lr);
+    if (lv > 0){
+      $('dAlert').className = 'alert-bar a' + lv;
+      $('dAlert').innerHTML = `<div class="flag f${lv}">${lv === 2 ? '!!' : '!'}</div><div><b>${LEVEL_TITLE[lv]}</b>${issuesOf(lr).map(x => x.text).join(' • ')}</div>`;
+      $('dAlert').style.display = 'flex';
+    } else {
+      $('dAlert').style.display = 'none';
+    }
 
     ensureCharts();
     const labels = records.map(r => new Date(r.timestamp).toLocaleTimeString('th-TH', { hour12:false }));
@@ -235,7 +328,10 @@
     charts.hr.data.labels = labels; charts.hr.data.datasets[0].data = records.map(r => r.heartRate); charts.hr.update();
     charts.sys.data.labels = labels; charts.sys.data.datasets[0].data = records.map(r => r.systolic); charts.sys.data.datasets[1].data = records.map(r => r.diastolic); charts.sys.update();
     charts.spo2.data.labels = labels; charts.spo2.data.datasets[0].data = records.map(r => r.spo2); charts.spo2.update();
-    charts.temp.data.labels = labels; charts.temp.data.datasets[0].data = records.map(r => r.temperature); charts.temp.update();
+    // นาฬิกาไม่มีเซนเซอร์อุณหภูมิ: ถ้าไม่มีค่าอุณหภูมิเลย ซ่อนกราฟนี้ แทนที่จะโชว์เส้น 0
+    const anyTemp = records.some(hasTemp);
+    $('chartTemp').closest('.chart-card').style.display = anyTemp ? '' : 'none';
+    charts.temp.data.labels = labels; charts.temp.data.datasets[0].data = records.map(r => hasTemp(r) ? r.temperature : null); charts.temp.update();
   }
 
   async function tick(){
