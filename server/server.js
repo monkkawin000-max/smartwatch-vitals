@@ -130,6 +130,27 @@ for (const p of patients) {
 }
 if (patientsMigrated) saveJson(PATIENTS_FILE, patients);
 
+// ---------- Seed: สร้างคนไข้เดโมอัตโนมัติ ----------
+// Render ฟรีล้างไฟล์ข้อมูลทุกครั้งที่ Deploy → ถ้ายังไม่มีคนไข้เลย ให้สร้าง 001 monk (รหัส 1234) + ผูก monk-001 ให้เลย
+// ทำเฉพาะตอนไม่มีคนไข้ในระบบ จึงไม่ทับข้อมูลจริงที่มีอยู่
+if (patients.length === 0) {
+  patients.push({
+    patientId: '001',
+    name: 'monk',
+    age: null,
+    note: '',
+    active: true,
+    passwordHash: bcrypt.hashSync('1234', 10),
+    createdAt: new Date().toISOString(),
+  });
+  saveJson(PATIENTS_FILE, patients);
+  if (!devices.some((dv) => dv.patientId === '001' || dv.deviceId === 'monk-001')) {
+    devices.push({ deviceId: 'monk-001', patientId: '001', pairedAt: new Date().toISOString() });
+    saveJson(DEVICES_FILE, devices);
+  }
+  console.log('[SEED] สร้างคนไข้เดโม 001 monk และผูกอุปกรณ์ monk-001');
+}
+
 // ---------- Middleware ป้องกัน route ตาม role ----------
 function requireRole(...allowedRoles) {
   return (req, res, next) => {
