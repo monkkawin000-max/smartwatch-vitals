@@ -37,7 +37,7 @@
   .p-card.active{ border-color: var(--teal); box-shadow: 0 0 0 3px var(--teal-soft); }
   .p-card .pid{ font-size:11px; color:var(--ink-dim); }
   .p-card .name{ font-weight:700; font-size:15px; margin-bottom:8px; }
-  .p-mini{ display:grid; grid-template-columns: repeat(4,1fr); gap:4px; }
+  .p-mini{ display:grid; grid-template-columns: repeat(3,1fr); gap:4px; }
   .p-mini div{ text-align:center; }
   .p-mini .v{ font-family:var(--mono); font-size:13px; font-weight:700; }
   .p-mini .l{ font-size:9px; color:var(--ink-dim); text-transform:uppercase; }
@@ -49,7 +49,7 @@
   .headline{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px 22px; }
   .headline .name{ font-size:18px; font-weight:700; }
   .headline .pid{ font-size:12px; color:var(--ink-dim); margin-bottom:14px; }
-  .stat-row{ display:grid; grid-template-columns: repeat(4,1fr); gap:10px; }
+  .stat-row{ display:grid; grid-template-columns: repeat(3,1fr); gap:10px; }
   .stat{ background:var(--teal-soft); border-radius:12px; padding:10px 12px; }
   .stat .l{ font-size:10px; text-transform:uppercase; color:var(--teal-deep); }
   .stat .v{ font-family:var(--mono); font-size:20px; font-weight:700; color:var(--ink); }
@@ -124,14 +124,12 @@
           <div class="stat"><div class="l">Heart Rate</div><div class="v" id="dHR">--<span class="u">bpm</span></div></div>
           <div class="stat"><div class="l">Blood Pressure</div><div class="v" id="dBP">--/--<span class="u">mmHg</span></div></div>
           <div class="stat"><div class="l">SpO2</div><div class="v" id="dSpo2">--<span class="u">%</span></div></div>
-          <div class="stat"><div class="l">Temp</div><div class="v" id="dTemp">--<span class="u">°C</span></div></div>
         </div>
       </div>
       <div class="chart-grid" id="chartGrid">
         <div class="chart-card"><h3>Heart Rate (bpm)</h3><canvas id="chartHR"></canvas></div>
         <div class="chart-card"><h3>Blood Pressure (mmHg)</h3><canvas id="chartBP"></canvas></div>
-        <div class="chart-card"><h3>SpO2 (%)</h3><canvas id="chartSpo2"></canvas></div>
-        <div class="chart-card"><h3>Temperature (°C)</h3><canvas id="chartTemp"></canvas></div>
+        <div class="chart-card" style="grid-column:1/-1"><h3>SpO2 (%)</h3><canvas id="chartSpo2"></canvas></div>
       </div>
       <div class="no-data" id="noDataMsg" style="display:none;">คนไข้รายนี้ยังไม่มีข้อมูล Vital Signs เข้ามา</div>
     </div>
@@ -158,14 +156,12 @@
 
   // ----- เกณฑ์ระดับการแจ้งเตือน (ค่าตั้งต้นตัวอย่าง — ปรับตามแพทย์ได้) -----
   // 0 = ปกติ, 1 = ผิดปกติเล็กน้อย (เหลือง !), 2 = ผิดปกติมาก (แดง !!)
-  function hasTemp(r){ return r && r.temperature !== null && r.temperature !== undefined && Number(r.temperature) > 0; }
 
   function levelOf(field, r){
     if (!r || !r.hasData) return 0;
     if (field === 'hr'){ const v = r.heartRate; if (v < 50 || v > 120) return 2; if (v < 60 || v > 100) return 1; return 0; }
     if (field === 'sys'){ const v = r.systolic; if (v < 90 || v > 160) return 2; if (v < 100 || v > 140) return 1; return 0; }
     if (field === 'spo2'){ const v = r.spo2; if (v < 92) return 2; if (v < 95) return 1; return 0; }
-    if (field === 'temp'){ if (!hasTemp(r)) return 0; const v = Number(r.temperature); if (v > 38.5) return 2; if (v >= 37.5) return 1; return 0; }
     return 0;
   }
   function cls(field, r){ const l = levelOf(field, r); return l === 2 ? 'abn' : (l === 1 ? 'warn' : ''); }
@@ -177,7 +173,6 @@
     if ((l = levelOf('hr', r)))   out.push({ level:l, text:`HR ${r.heartRate < 60 ? 'ต่ำ' : 'สูง'}${l === 2 ? 'มาก' : 'เล็กน้อย'} (${r.heartRate} bpm)` });
     if ((l = levelOf('sys', r)))  out.push({ level:l, text:`ความดัน${r.systolic < 100 ? 'ต่ำ' : 'สูง'}${l === 2 ? 'มาก' : 'เล็กน้อย'} (${r.systolic}/${r.diastolic})` });
     if ((l = levelOf('spo2', r))) out.push({ level:l, text:`SpO2 ต่ำ${l === 2 ? 'มาก' : 'เล็กน้อย'} (${r.spo2}%)` });
-    if ((l = levelOf('temp', r))) out.push({ level:l, text:`อุณหภูมิสูง${l === 2 ? 'มาก' : 'เล็กน้อย'} (${r.temperature}°C)` });
     return out;
   }
   function patientLevel(r){
@@ -233,7 +228,6 @@
           <div><div class="v ${cls('hr',r)}">${r.heartRate}</div><div class="l">HR</div></div>
           <div><div class="v ${cls('sys',r)}">${r.systolic}/${r.diastolic}</div><div class="l">BP</div></div>
           <div><div class="v ${cls('spo2',r)}">${r.spo2}%</div><div class="l">SpO2</div></div>
-          <div><div class="v ${cls('temp',r)}">${hasTemp(r) ? r.temperature + '°' : '--'}</div><div class="l">Temp</div></div>
         </div>
         ${lv > 0 ? `<div class="p-alert a${lv}"><b>${LEVEL_TITLE[lv]}</b>${issues.map(x => x.text).join(' • ')}</div>` : ''}
         <div class="time">${new Date(r.timestamp).toLocaleString('th-TH')}${sd ? ` <span class="stale">· ข้อมูลเก่า ${sd} วัน</span>` : ''}</div>
@@ -271,7 +265,6 @@
     charts.hr   = makeChart($('chartHR'),   'HR',  '#0E7C86');
     charts.sys  = makeChart($('chartBP'),   'Sys', '#0E7C86');
     charts.spo2 = makeChart($('chartSpo2'), 'SpO2','#3FA796');
-    charts.temp = makeChart($('chartTemp'), 'Temp','#E8A33D');
     charts.sys.data.datasets.push({
       label: 'Dia', data: [], borderColor: '#E8A33D', backgroundColor: '#E8A33D22',
       tension: 0.35, pointRadius: 2, fill: true, borderWidth: 2,
@@ -291,7 +284,7 @@
       const patients = await (await fetch('/api/patients', { credentials:'include' })).json();
       const p = patients.find(x => x.patientId === selectedPatientId);
       $('dName').textContent = p ? p.name : selectedPatientId;
-      ['dHR','dBP','dSpo2','dTemp'].forEach(id => $(id).textContent = '--');
+      ['dHR','dBP','dSpo2'].forEach(id => $(id).textContent = '--');
       return;
     }
     $('chartGrid').style.display = '';
@@ -309,8 +302,6 @@
     $('dBP').className = 'v ' + cls('sys', lr);
     $('dSpo2').innerHTML = latest.spo2 + '<span class="u">%</span>';
     $('dSpo2').className = 'v ' + cls('spo2', lr);
-    $('dTemp').innerHTML = hasTemp(latest) ? latest.temperature + '<span class="u">°C</span>' : '--';
-    $('dTemp').className = 'v ' + cls('temp', lr);
 
     // แถบแจ้งเตือนของคนไข้ที่เลือก
     const lv = patientLevel(lr);
@@ -328,10 +319,6 @@
     charts.hr.data.labels = labels; charts.hr.data.datasets[0].data = records.map(r => r.heartRate); charts.hr.update();
     charts.sys.data.labels = labels; charts.sys.data.datasets[0].data = records.map(r => r.systolic); charts.sys.data.datasets[1].data = records.map(r => r.diastolic); charts.sys.update();
     charts.spo2.data.labels = labels; charts.spo2.data.datasets[0].data = records.map(r => r.spo2); charts.spo2.update();
-    // นาฬิกาไม่มีเซนเซอร์อุณหภูมิ: ถ้าไม่มีค่าอุณหภูมิเลย ซ่อนกราฟนี้ แทนที่จะโชว์เส้น 0
-    const anyTemp = records.some(hasTemp);
-    $('chartTemp').closest('.chart-card').style.display = anyTemp ? '' : 'none';
-    charts.temp.data.labels = labels; charts.temp.data.datasets[0].data = records.map(r => hasTemp(r) ? r.temperature : null); charts.temp.update();
   }
 
   async function tick(){
