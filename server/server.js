@@ -130,25 +130,28 @@ for (const p of patients) {
 }
 if (patientsMigrated) saveJson(PATIENTS_FILE, patients);
 
-// ---------- Seed: สร้างคนไข้เดโมอัตโนมัติ ----------
-// Render ฟรีล้างไฟล์ข้อมูลทุกครั้งที่ Deploy → ถ้ายังไม่มีคนไข้เลย ให้สร้าง 001 monk (รหัส 1234) + ผูก monk-001 ให้เลย
-// ทำเฉพาะตอนไม่มีคนไข้ในระบบ จึงไม่ทับข้อมูลจริงที่มีอยู่
-if (patients.length === 0) {
-  patients.push({
-    patientId: '001',
-    name: 'monk',
-    age: null,
-    note: '',
-    active: true,
-    passwordHash: bcrypt.hashSync('1234', 10),
-    createdAt: new Date().toISOString(),
-  });
+// ---------- Seed: สร้าง/ซ่อมบัญชีเดโม 001 monk ทุกครั้งที่เริ่มเซิร์ฟเวอร์ ----------
+// Render ฟรีล้างไฟล์ข้อมูลทุกครั้งที่ Deploy (และ patients.json ใน GitHub อาจเป็นไฟล์เก่าที่ไม่มีรหัสผ่าน)
+// - ไม่มีคนไข้ 001 → สร้าง monk รหัส 1234
+// - มี 001 แล้วแต่ยังไม่มีรหัสผ่าน หรือถูกปิดบัญชี → ตั้งรหัส 1234 และเปิดใช้งาน
+// - มี 001 พร้อมรหัสผ่านอยู่แล้ว → ไม่แตะต้อง
+// - ผูกอุปกรณ์ monk-001 ให้ ถ้า 001 ยังไม่มีอุปกรณ์ และ monk-001 ยังไม่ถูกใช้
+let demo = patients.find((p) => p.patientId === '001');
+if (!demo) {
+  demo = { patientId: '001', name: 'monk', age: null, note: '', active: true, passwordHash: bcrypt.hashSync('1234', 10), createdAt: new Date().toISOString() };
+  patients.push(demo);
   saveJson(PATIENTS_FILE, patients);
-  if (!devices.some((dv) => dv.patientId === '001' || dv.deviceId === 'monk-001')) {
-    devices.push({ deviceId: 'monk-001', patientId: '001', pairedAt: new Date().toISOString() });
-    saveJson(DEVICES_FILE, devices);
-  }
-  console.log('[SEED] สร้างคนไข้เดโม 001 monk และผูกอุปกรณ์ monk-001');
+  console.log('[SEED] สร้างคนไข้เดโม 001 monk');
+} else if (!demo.passwordHash || !demo.active) {
+  if (!demo.passwordHash) demo.passwordHash = bcrypt.hashSync('1234', 10);
+  demo.active = true;
+  saveJson(PATIENTS_FILE, patients);
+  console.log('[SEED] ซ่อมบัญชี 001: ตั้งรหัสผ่านเริ่มต้น/เปิดใช้งาน');
+}
+if (!devices.some((dv) => dv.patientId === '001') && !devices.some((dv) => dv.deviceId === 'monk-001')) {
+  devices.push({ deviceId: 'monk-001', patientId: '001', pairedAt: new Date().toISOString() });
+  saveJson(DEVICES_FILE, devices);
+  console.log('[SEED] ผูกอุปกรณ์ monk-001 กับคนไข้ 001');
 }
 
 // ---------- Middleware ป้องกัน route ตาม role ----------
