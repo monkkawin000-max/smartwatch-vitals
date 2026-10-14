@@ -91,7 +91,7 @@
       <div class="wc-status"><span class="dot" id="wcDot"></span><span id="wcText">ยังไม่ได้เชื่อมต่อ</span></div>
       <div class="wc-meta" id="wcMeta"></div>
       <div class="live-box" id="liveBox" style="display:none;">
-        <div class="live-head"><span id="liveTitle">กำลังวัด...</span><span class="live-tag">ค่าชั่วคราวระหว่างวัด — ยังไม่ใช่ผลสุดท้าย</span></div>
+        <div class="live-head"><span id="liveTitle">กำลังวัด...</span><span class="live-tag">ค่าสดระหว่างวัด</span></div>
         <div class="live-row">
           <div><div class="l">Heart Rate</div><div class="v" id="liveHR">--</div></div>
           <div><div class="l">BP</div><div class="v" id="liveBP">--/--</div></div>
@@ -188,7 +188,7 @@
       <div class="stat ${isAbnormal('spo2',latest)?'abn':'ok'}"><div class="l">SpO2</div><div class="v">${latest.spo2}<span class="u">%</span></div></div>
       <div class="stat ${isAbnormal('temp',latest)?'abn':'ok'}"><div class="l">Temperature</div><div class="v">${hasTemp(latest) ? latest.temperature : '--'}${hasTemp(latest) ? '<span class="u">°C</span>' : ''}</div></div>`;
 
-    const recent = [...records].slice(0, 20).reverse(); // เก่า -> ใหม่ สำหรับกราฟ
+    const recent = [...records].slice(0, 30).reverse(); // เก่า -> ใหม่ สำหรับกราฟ
     const labels = recent.map(r => new Date(r.timestamp).toLocaleTimeString('th-TH', { hour12:false }));
     const values = recent.map(r => r.heartRate);
 
@@ -229,8 +229,8 @@
   const IDX_SPO2 = 16, IDX_SYSTOLIC = 17, IDX_DIASTOLIC = 18, IDX_HEARTRATE = 19;
 
   let bleDevice = null;
-  let pending = null;       // แพ็กเก็ตวัดล่าสุดที่ยังไม่ยืนยัน (รอสัญญาณจบการวัด)
-  let outbox = [];          // ค่าที่ยืนยันแล้วแต่ยังส่งไม่สำเร็จ
+  let lastQueuedAt = null;  // measuredAt ของแพ็กเก็ตล่าสุดที่ใส่คิวส่ง (กันส่งซ้ำ)
+  let outbox = [];          // ค่าที่รอส่งเข้าระบบ
   let sending = false;
   let wakeLock = null;
   let measureStart = null;  // เวลาที่เริ่มได้รับแพ็กเก็ตของรอบวัดนี้
@@ -264,7 +264,7 @@
     return new Date(t);
   }
 
-  // ----- แสดงค่าสดระหว่างวัด (ชั่วคราว ไม่ส่งเข้าระบบ ไม่ใช่ผลสุดท้าย) -----
+  // ----- แสดงค่าสดระหว่างวัด (ทุกแพ็กเก็ตถูกส่งเข้าระบบด้วย) -----
   function showLive(hr, sys, dia, spo2){
     lastPacketAt = Date.now();
     if (!measureStart) measureStart = lastPacketAt;
@@ -343,7 +343,6 @@
       await notifyChar.startNotifications();
       notifyChar.addEventListener('characteristicvaluechanged', onPacket);
 
-      pending = null;
       wcStatus(`เชื่อมต่อแล้ว: ${bleDevice.name || 'Smart Watch'}`, 'on');
       wcMeta('เริ่มวัดที่ตัวนาฬิกา แล้วรอจนวัดเสร็จ ค่าจะถูกส่งเข้าระบบอัตโนมัติ');
       $('wcConnect').style.display = 'none';
@@ -360,7 +359,6 @@
   });
 
   function onDisconnected(){
-    pending = null;
     hideLive();
     wcStatus('ตัดการเชื่อมต่อแล้ว', 'err');
     wcMeta(outbox.length ? 'มีค่าที่ยังส่งไม่สำเร็จ จะส่งใหม่เมื่อมีการวัดครั้งต่อไป' : 'กด "เชื่อมต่อนาฬิกา" เพื่อเชื่อมใหม่');
@@ -369,7 +367,7 @@
     try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {}
   }
 
-  // ค่าระหว่างวัดไม่นิ่ง — เก็บไว้เป็น pending ก่อน แล้วค่อยยืนยันเมื่อนาฬิกาส่งสัญญาณจบการวัด (0x05)
+  // โหมดสด: ทุกแพ็กเก็ตวัดที่อ่านได้ถูกส่งเข้าระบบทันที (ไม่รอค่าสุดท้ายของรอบ)
   function onPacket(event){
     const data = new Uint8Array(event.target.value.buffer);
     const type = data[TYPE_INDEX];
@@ -385,22 +383,22 @@
       const sec = watchClockSec(data);
       const wd = watchDateFromSec(sec);
       showLive(heartRate, systolic, diastolic, spo2);
-      pending = { heartRate, systolic, diastolic, spo2, clockLabel: clockLabelFromSec(sec), measuredAt: wd ? wd.toISOString() : null };
-      wcStatus('กำลังวัด... (รอให้วัดเสร็จ)', 'on');
+      // โหมดสด: ส่งทุกแพ็กเก็ตที่อ่านได้เข้าระบบทันที (ไม่รอค่าสุดท้ายของรอบ) ตัวเลขและกราฟจะวิ่งตามนาฬิกา
+      const measuredAt = wd ? wd.toISOString() : null;
+      if (measuredAt && measuredAt === lastQueuedAt) return; // แพ็กเก็ตซ้ำในวินาทีเดียวกัน
+      lastQueuedAt = measuredAt;
+      wcStatus('กำลังวัด... (ค่าสด)', 'on');
       wcMeta('อย่าปิดหน้านี้จนกว่านาฬิกาจะวัดเสร็จ');
+      outbox.push({ heartRate, systolic, diastolic, spo2, clockLabel: clockLabelFromSec(sec), measuredAt });
+      if (outbox.length > 200) outbox.shift();
+      flushOutbox();
       return;
     }
 
     if (type === TYPE_SESSION_END){
-      if (!pending) return;
-      const confirmed = pending;
-      pending = null;
+      // จบรอบวัด — ค่าทุกแพ็กเก็ตถูกส่งไปแล้ว แค่คืนสถานะหน้าจอ
       hideLive();
       wcStatus(`เชื่อมต่อแล้ว: ${bleDevice && bleDevice.name ? bleDevice.name : 'Smart Watch'}`, 'on');
-      wcMeta(`วัดล่าสุด: HR ${confirmed.heartRate} • BP ${confirmed.systolic}/${confirmed.diastolic} • SpO2 ${confirmed.spo2}% (เวลานาฬิกา ${confirmed.clockLabel}) — กำลังส่งเข้าระบบ...`);
-      outbox.push(confirmed);
-      if (outbox.length > 50) outbox.shift();
-      flushOutbox();
     }
   }
 
