@@ -1,0 +1,74 @@
+name: Build Android APK
+
+# ไฟล์เดียวจบ: สร้างโปรเจกต์แอป Android ห่อหน้าเว็บคนไข้ แล้วสร้างไฟล์ติดตั้ง (APK)
+# กดรันที่แท็บ Actions → Build Android APK → Run workflow (หรือรันเองเมื่อ Commit ไฟล์นี้)
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-apk.yml'
+
+env:
+  APP_URL: https://smartwatch-vitals.onrender.com/mockup-patient/login.html
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: สร้างโปรเจกต์แอป
+        run: |
+          mkdir app && cd app
+          mkdir www
+          cat > package.json <<'JSON'
+          {
+            "name": "smartwatch-vitals-app",
+            "version": "0.1.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/android": "^6.0.0",
+              "@capacitor/cli": "^6.0.0",
+              "@capacitor/core": "^6.0.0"
+            }
+          }
+          JSON
+          cat > capacitor.config.json <<JSON
+          {
+            "appId": "com.monk.smartwatchvitals",
+            "appName": "Smartwatch Vitals",
+            "webDir": "www",
+            "server": { "url": "${APP_URL}", "cleartext": false }
+          }
+          JSON
+          cat > www/index.html <<HTML
+          <!doctype html>
+          <html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Smartwatch Vitals</title></head>
+          <body style="font-family:sans-serif;text-align:center;padding:40px">
+          <h2>Smartwatch Vitals</h2><p>เปิดแอปไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง</p>
+          <a href="${APP_URL}">เปิดหน้าเข้าสู่ระบบ</a></body></html>
+          HTML
+
+      - name: ติดตั้งและสร้างโปรเจกต์ Android
+        working-directory: app
+        run: |
+          npm install
+          npx cap add android
+
+      - name: สร้างไฟล์ APK
+        working-directory: app/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: อัปโหลด APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: smartwatch-vitals-apk
+          path: app/android/app/build/outputs/apk/debug/app-debug.apk
