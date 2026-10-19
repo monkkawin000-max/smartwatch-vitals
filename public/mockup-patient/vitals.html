@@ -251,6 +251,35 @@
   const PKT_LEN = 20, TYPE_INDEX = 5, TYPE_MEASURE = 0x0E, TYPE_SESSION_END = 0x05;
   const IDX_SPO2 = 16, IDX_SYSTOLIC = 17, IDX_DIASTOLIC = 18, IDX_HEARTRATE = 19;
 
+  // ----- โหมดแอป Android (Capacitor): ใช้ปลั๊กอิน BluetoothLe แทน Web Bluetooth -----
+  const IS_APP = !!(window.Capacitor && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform());
+  const BLE_SUPPORTED = IS_APP || !!navigator.bluetooth;
+  const PLUGIN = 'BluetoothLe';
+  const nat = (method, opts) => Capacitor.nativePromise(PLUGIN, method, opts || {});
+  let nativeDeviceId = null, nativeName = '', nativeConnected = false, nativeListeners = [];
+
+  function hexToBytes(hex){
+    const clean = String(hex || '').replace(/[^0-9a-fA-F]/g, '');
+    const out = new Uint8Array(Math.floor(clean.length / 2));
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16);
+    return out;
+  }
+  function androidMajor(){ const m = navigator.userAgent.match(/Android (\d+)/); return m ? parseInt(m[1], 10) : 0; }
+  function isBleConnected(){
+    return IS_APP ? nativeConnected : !!(bleDevice && bleDevice.gatt && bleDevice.gatt.connected);
+  }
+  // แปลข้อความ error จากปลั๊กอินเป็นภาษาไทยที่เข้าใจง่าย (แนบข้อความเดิมท้ายบรรทัดไว้ช่วยแก้ปัญหา)
+  function friendlyBleError(err){
+    const raw = (err && (err.message || err.errorMessage)) ? String(err.message || err.errorMessage) : String(err || 'unknown');
+    const low = raw.toLowerCase();
+    let msg = raw;
+    if (low.includes('permission')) msg = 'ยังไม่ได้อนุญาตสิทธิ์ — ไปที่ ตั้งค่า > แอป > Smartwatch Vitals > สิทธิ์ แล้วอนุญาต "อุปกรณ์ใกล้เคียง" และ "ตำแหน่งที่ตั้ง"';
+    else if (low.includes('no device found') || low.includes('cancel')) msg = 'ไม่พบนาฬิกา (ชื่อขึ้นต้น Y19PRO) หรือยกเลิกการเลือก — ตรวจสอบว่านาฬิกาเปิดอยู่ อยู่ใกล้มือถือ และไม่ได้เชื่อมกับแอป HiWatchPro อยู่';
+    else if (low.includes('timeout') || low.includes('timed out')) msg = 'เชื่อมต่อนานเกินไป — ลองปิดแอป HiWatchPro แล้วลองใหม่';
+    else if (low.includes('not enabled') || low.includes('disabled')) msg = 'Bluetooth ปิดอยู่ — เปิด Bluetooth ในมือถือแล้วลองใหม่';
+    return msg + (msg !== raw ? ` [${raw}]` : '');
+  }
+
   let bleDevice = null;
   let lastQueuedAt = null;  // measuredAt ของแพ็กเก็ตล่าสุดที่ใส่คิวส่ง (กันส่งซ้ำ)
   let outbox = [];          // ค่าที่รอส่งเข้าระบบ
@@ -319,14 +348,14 @@
       deviceInfo = await res.json();
     } catch (e) { return; }
 
-    const connected = bleDevice && bleDevice.gatt && bleDevice.gatt.connected;
+    const connected = isBleConnected();
     if (!deviceInfo.paired){
       $('wcConnect').disabled = true;
       if (!connected){
         wcStatus('ยังไม่ได้ผูกนาฬิกากับบัญชีนี้', 'err');
         wcMeta('กรุณาติดต่อเจ้าหน้าที่ IT เพื่อลงทะเบียนอุปกรณ์ก่อน');
       }
-    } else if (navigator.bluetooth){
+    } else if (BLE_SUPPORTED){
       $('wcConnect').disabled = false;
       if (!connected && !$('wcText').textContent.startsWith('เชื่อมต่อไม่สำเร็จ') && !outbox.length){
         wcStatus('ยังไม่ได้เชื่อมต่อ', '');
@@ -336,7 +365,11 @@
     }
   }
 
-  if (!navigator.bluetooth){
+  if (IS_APP){
+    // ในแอปไม่ใช้ข้อความของ Chrome
+    const hint = document.querySelector('.wc-hint');
+    if (hint) hint.innerHTML = 'วิธีใช้: กด "เชื่อมต่อนาฬิกา" → อนุญาตสิทธิ์ Bluetooth/ตำแหน่งที่ตั้ง → เลือกนาฬิกา → เริ่มวัดที่ตัวนาฬิกา (เมนูวัดหัวใจ) ค่าจะถูกส่งเข้าระบบอัตโนมัติ<br>เปิด Bluetooth และตำแหน่งที่ตั้งในมือถือ • ต้องเปิดแอปค้างไว้ตอนวัด';
+  } else if (!navigator.bluetooth){
     $('wcWarn').style.display = 'block';
     $('wcWarn').innerHTML = 'เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth — ใช้ <b>Chrome บน Android</b> เท่านั้น (iPhone/Safari และเบราว์เซอร์อื่นใช้ไม่ได้)';
     $('wcConnect').disabled = true;
@@ -346,10 +379,64 @@
     try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && bleDevice && bleDevice.gatt && bleDevice.gatt.connected) keepScreenOn();
+    if (document.visibilityState === 'visible' && isBleConnected()) keepScreenOn();
   });
 
+  async function connectNative(){
+    try {
+      wcStatus('กำลังขอสิทธิ์ใช้ Bluetooth...', 'on');
+      wcMeta('ถ้ามีหน้าต่างถามสิทธิ์ ให้กด "อนุญาต" ทั้งหมด');
+      await nat('initialize', { androidNeverForLocation: false });
+
+      const en = await nat('isEnabled');
+      if (!en.value){
+        wcMeta('กรุณากดเปิด Bluetooth ในหน้าต่างที่เด้งขึ้นมา');
+        try { await nat('requestEnable'); } catch (e) { throw new Error('Bluetooth ปิดอยู่ — เปิด Bluetooth ในมือถือแล้วลองใหม่ (not enabled)'); }
+      }
+      // Android 11 ลงไป ต้องเปิดตำแหน่งที่ตั้งด้วยจึงจะสแกนบลูทูธได้
+      if (androidMajor() && androidMajor() <= 11){
+        const loc = await nat('isLocationEnabled');
+        if (!loc.value){
+          try { await nat('openLocationSettings'); } catch (e) {}
+          throw new Error('ต้องเปิดตำแหน่งที่ตั้ง (Location) ในมือถือก่อน แล้วกลับมากดเชื่อมต่ออีกครั้ง');
+        }
+      }
+
+      wcStatus('กำลังค้นหานาฬิกา...', 'on');
+      wcMeta('เลือกนาฬิกา (ชื่อขึ้นต้นด้วย Y19PRO) ในหน้าต่างที่เด้งขึ้นมา');
+      const dev = await nat('requestDevice', { namePrefix: 'Y19PRO' });
+      const id = dev.deviceId;
+      nativeName = dev.name || 'Smart Watch';
+
+      wcStatus('กำลังเชื่อมต่อ...', 'on');
+      nativeListeners.push(Capacitor.addListener(PLUGIN, 'disconnected|' + id, () => onDisconnected()));
+      await nat('connect', { deviceId: id, timeout: 15000 });
+      nativeDeviceId = id;
+
+      const key = `notification|${id}|${SERVICE_UUID}|${NOTIFY_UUID}`;
+      nativeListeners.push(Capacitor.addListener(PLUGIN, key, (ev) => onPacketBytes(hexToBytes(ev && ev.value))));
+      await nat('startNotifications', { deviceId: id, service: SERVICE_UUID, characteristic: NOTIFY_UUID });
+      nativeConnected = true;
+
+      wcStatus(`เชื่อมต่อแล้ว: ${nativeName}`, 'on');
+      wcMeta('เริ่มวัดที่ตัวนาฬิกา แล้วรอจนวัดเสร็จ ค่าจะถูกส่งเข้าระบบอัตโนมัติ');
+      $('wcConnect').style.display = 'none';
+      $('wcDisconnect').style.display = 'block';
+      keepScreenOn();
+    } catch (err) {
+      nativeConnected = false;
+      cleanupNative();
+      wcStatus('เชื่อมต่อไม่สำเร็จ', 'err');
+      wcMeta(friendlyBleError(err));
+    }
+  }
+  function cleanupNative(){
+    nativeListeners.forEach(l => { try { l && l.remove && l.remove(); } catch (e) {} });
+    nativeListeners = [];
+  }
+
   $('wcConnect').addEventListener('click', async () => {
+    if (IS_APP) return connectNative();
     try {
       wcStatus('กำลังค้นหานาฬิกา...', 'on');
       wcMeta('เลือกนาฬิกา (ชื่อขึ้นต้นด้วย Y19PRO) ในหน้าต่างที่เด้งขึ้นมา');
@@ -377,11 +464,21 @@
     }
   });
 
-  $('wcDisconnect').addEventListener('click', () => {
+  $('wcDisconnect').addEventListener('click', async () => {
+    if (IS_APP){
+      const id = nativeDeviceId;
+      try { if (id) await nat('disconnect', { deviceId: id }); } catch (e) {}
+      onDisconnected();
+      return;
+    }
     if (bleDevice && bleDevice.gatt && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
   });
 
   function onDisconnected(){
+    if (IS_APP){
+      if (!nativeConnected && !nativeDeviceId) return; // ตัดการเชื่อมไปแล้ว
+      nativeConnected = false; nativeDeviceId = null; cleanupNative();
+    }
     hideLive();
     wcStatus('ตัดการเชื่อมต่อแล้ว', 'err');
     wcMeta(outbox.length ? 'มีค่าที่ยังส่งไม่สำเร็จ จะส่งใหม่เมื่อมีการวัดครั้งต่อไป' : 'กด "เชื่อมต่อนาฬิกา" เพื่อเชื่อมใหม่');
@@ -392,7 +489,9 @@
 
   // โหมดสด: ทุกแพ็กเก็ตวัดที่อ่านได้ถูกส่งเข้าระบบทันที (ไม่รอค่าสุดท้ายของรอบ)
   function onPacket(event){
-    const data = new Uint8Array(event.target.value.buffer);
+    onPacketBytes(new Uint8Array(event.target.value.buffer));
+  }
+  function onPacketBytes(data){
     const type = data[TYPE_INDEX];
 
     if (data.length >= PKT_LEN && type === TYPE_MEASURE){
