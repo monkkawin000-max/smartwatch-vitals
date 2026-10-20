@@ -255,6 +255,10 @@
   const IS_APP = !!(window.Capacitor && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform());
   const BLE_SUPPORTED = IS_APP || !!navigator.bluetooth;
   const PLUGIN = 'BluetoothLe';
+  // บริการเบื้องหลัง (ปลั๊กอิน WatchBridge) — ถ้าไม่มี จะใช้วิธีเดิมผ่าน BluetoothLe
+  const SVC_OK = IS_APP && typeof Capacitor.isPluginAvailable === 'function' && Capacitor.isPluginAvailable('WatchBridge');
+  const svc = (m, o) => Capacitor.nativePromise('WatchBridge', m, o || {});
+  let svcTimer = null, svcSeq = 0, svcOn = false;
   const nat = (method, opts) => Capacitor.nativePromise(PLUGIN, method, opts || {});
   let nativeDeviceId = null, nativeName = '', nativeConnected = false, nativeListeners = [];
 
@@ -266,7 +270,7 @@
   }
   function androidMajor(){ const m = navigator.userAgent.match(/Android (\d+)/); return m ? parseInt(m[1], 10) : 0; }
   function isBleConnected(){
-    return IS_APP ? nativeConnected : !!(bleDevice && bleDevice.gatt && bleDevice.gatt.connected);
+    return IS_APP ? (nativeConnected || svcOn) : !!(bleDevice && bleDevice.gatt && bleDevice.gatt.connected);
   }
   // แปลข้อความ error จากปลั๊กอินเป็นภาษาไทยที่เข้าใจง่าย (แนบข้อความเดิมท้ายบรรทัดไว้ช่วยแก้ปัญหา)
   function friendlyBleError(err){
@@ -274,7 +278,7 @@
     const low = raw.toLowerCase();
     let msg = raw;
     if (low.includes('permission')) msg = 'ยังไม่ได้อนุญาตสิทธิ์ — ไปที่ ตั้งค่า > แอป > Smartwatch Vitals > สิทธิ์ แล้วอนุญาต "อุปกรณ์ใกล้เคียง" และ "ตำแหน่งที่ตั้ง"';
-    else if (low.includes('no device found') || low.includes('cancel')) msg = 'ไม่พบนาฬิกา (ชื่อขึ้นต้น Y19PRO) หรือยกเลิกการเลือก — ตรวจสอบว่านาฬิกาเปิดอยู่ อยู่ใกล้มือถือ และไม่ได้เชื่อมกับแอป HiWatchPro อยู่';
+    else if (low.includes('no device found') || low.includes('cancel')) msg = 'ไม่พบนาฬิกา — ปิดแอป HiWatchPro ให้สนิท (หรือปิด Bluetooth ในแอปนั้น) แล้วไปที่ตั้งค่า Bluetooth ของมือถือ ถ้ามี Y19PRO ค้างอยู่ให้กด "เลิกจับคู่/ลืมอุปกรณ์" จากนั้นลองใหม่ (รีสตาร์ตนาฬิกาด้วยถ้ายังไม่เจอ)';
     else if (low.includes('timeout') || low.includes('timed out')) msg = 'เชื่อมต่อนานเกินไป — ลองปิดแอป HiWatchPro แล้วลองใหม่';
     else if (low.includes('not enabled') || low.includes('disabled')) msg = 'Bluetooth ปิดอยู่ — เปิด Bluetooth ในมือถือแล้วลองใหม่';
     return msg + (msg !== raw ? ` [${raw}]` : '');
@@ -368,7 +372,7 @@
   if (IS_APP){
     // ในแอปไม่ใช้ข้อความของ Chrome
     const hint = document.querySelector('.wc-hint');
-    if (hint) hint.innerHTML = 'วิธีใช้: กด "เชื่อมต่อนาฬิกา" → อนุญาตสิทธิ์ Bluetooth/ตำแหน่งที่ตั้ง → เลือกนาฬิกา → เริ่มวัดที่ตัวนาฬิกา (เมนูวัดหัวใจ) ค่าจะถูกส่งเข้าระบบอัตโนมัติ<br>เปิด Bluetooth และตำแหน่งที่ตั้งในมือถือ • ต้องเปิดแอปค้างไว้ตอนวัด';
+    if (hint) hint.innerHTML = 'วิธีใช้: กด "เชื่อมต่อนาฬิกา" → อนุญาตสิทธิ์ Bluetooth/ตำแหน่งที่ตั้ง → เลือกนาฬิกา → เริ่มวัดที่ตัวนาฬิกา (เมนูวัดหัวใจ) ค่าจะถูกส่งเข้าระบบอัตโนมัติ<br>เปิด Bluetooth และตำแหน่งที่ตั้งในมือถือ • พับแอปไปใช้อย่างอื่นได้ (จะมีแถบแจ้งเตือนค้างไว้ขณะเชื่อมนาฬิกา) • ถ้าปัดปิดแอปทิ้งจะหยุดเชื่อม';
   } else if (!navigator.bluetooth){
     $('wcWarn').style.display = 'block';
     $('wcWarn').innerHTML = 'เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth — ใช้ <b>Chrome บน Android</b> เท่านั้น (iPhone/Safari และเบราว์เซอร์อื่นใช้ไม่ได้)';
@@ -381,6 +385,51 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && isBleConnected()) keepScreenOn();
   });
+
+  // ชื่อที่นาฬิกาโฆษณาอยู่ในข้อมูลดิบ (AD type 0x08/0x09) — Android มักไม่รู้ชื่อนี้ใน device.name จึงอ่านเอง
+  function advName(rawHex){
+    const b = hexToBytes(rawHex);
+    let i = 0;
+    while (i < b.length){
+      const len = b[i];
+      if (!len) break;
+      const type = b[i + 1];
+      if (type === 0x08 || type === 0x09){
+        return String.fromCharCode.apply(null, Array.from(b.slice(i + 2, i + 1 + len)));
+      }
+      i += len + 1;
+    }
+    return '';
+  }
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  // หานาฬิกา: 1) สแกนอัตโนมัติ หาชื่อขึ้นต้น Y19PRO (หรืออุปกรณ์ที่เคยเชื่อมล่าสุด) 2) ถ้าไม่เจอ แสดงรายการอุปกรณ์ให้เลือกเอง (ไม่กรองชื่อ)
+  async function findWatchNative(){
+    wcStatus('กำลังค้นหานาฬิกา...', 'on');
+    wcMeta('นาฬิกาต้องเปิดอยู่ อยู่ใกล้มือถือ และไม่ได้เชื่อมกับแอป HiWatchPro');
+    let lastId = null;
+    try { lastId = localStorage.getItem('sw_last_ble'); } catch (e) {}
+    let found = null;
+    const lis = Capacitor.addListener(PLUGIN, 'onScanResult', (r) => {
+      if (found || !r || !r.device) return;
+      const name = advName(r.rawAdvertisement) || r.localName || r.device.name || '';
+      if (/^Y19PRO/i.test(name) || (lastId && r.device.deviceId === lastId)){
+        found = { deviceId: r.device.deviceId, name: name || r.device.name, advName: name };
+      }
+    });
+    try {
+      await nat('requestLEScan', { scanMode: 2, allowDuplicates: false });
+      const limit = (window.__SCAN_MS || 12000) / 500;
+      for (let i = 0; i < limit && !found; i++) await sleep(500);
+    } finally {
+      try { await nat('stopLEScan'); } catch (e) {}
+      try { lis && lis.remove && lis.remove(); } catch (e) {}
+    }
+    if (found) return found;
+
+    wcMeta('ไม่พบอัตโนมัติ — เลือกนาฬิกาจากรายการ (หาชื่อ Y19PRO หรือรายการที่เป็น Unknown ที่สัญญาณแรงที่สุด)');
+    return await nat('requestDevice', { scanMode: 2 });
+  }
 
   async function connectNative(){
     try {
@@ -402,12 +451,17 @@
         }
       }
 
-      wcStatus('กำลังค้นหานาฬิกา...', 'on');
-      wcMeta('เลือกนาฬิกา (ชื่อขึ้นต้นด้วย Y19PRO) ในหน้าต่างที่เด้งขึ้นมา');
-      const dev = await nat('requestDevice', { namePrefix: 'Y19PRO' });
+      const dev = await findWatchNative();
       const id = dev.deviceId;
-      nativeName = dev.name || 'Smart Watch';
+      nativeName = dev.name || dev.advName || 'Smart Watch';
+      try { localStorage.setItem('sw_last_ble', id); } catch (e) {}
 
+      if (SVC_OK){
+        wcStatus('กำลังเริ่มบริการเบื้องหลัง...', 'on');
+        await svc('start', { deviceId: id, baseUrl: location.origin });
+        svcAttach();
+        return;
+      }
       wcStatus('กำลังเชื่อมต่อ...', 'on');
       nativeListeners.push(Capacitor.addListener(PLUGIN, 'disconnected|' + id, () => onDisconnected()));
       await nat('connect', { deviceId: id, timeout: 15000 });
@@ -430,6 +484,53 @@
       wcMeta(friendlyBleError(err));
     }
   }
+  // ----- โหมดบริการเบื้องหลัง: บริการ Android ต่อนาฬิกาและส่งค่าเอง หน้านี้แค่แสดงผล -----
+  function svcAttach(){
+    svcOn = true;
+    $('wcConnect').style.display = 'none';
+    $('wcDisconnect').style.display = 'block';
+    keepScreenOn();
+    if (svcTimer) clearInterval(svcTimer);
+    svcTimer = setInterval(svcPoll, 1000);
+    svcPoll();
+  }
+  function svcDetach(){
+    svcOn = false;
+    if (svcTimer){ clearInterval(svcTimer); svcTimer = null; }
+    hideLive();
+    wcStatus('ตัดการเชื่อมต่อแล้ว', 'err');
+    wcMeta('กด "เชื่อมต่อนาฬิกา" เพื่อเชื่อมใหม่');
+    $('wcConnect').style.display = 'block';
+    $('wcDisconnect').style.display = 'none';
+    try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {}
+  }
+  async function svcPoll(){
+    let st;
+    try { st = await svc('getStatus'); } catch (e) { return; }
+    if (!st.running){ if (svcOn) svcDetach(); return; }
+    if (st.state === 'connected'){
+      wcStatus(st.measuring ? 'กำลังวัด... (ค่าสด)' : 'เชื่อมต่อแล้ว (ทำงานเบื้องหลัง)', 'on');
+    } else {
+      wcStatus(st.state === 'connecting' ? 'กำลังเชื่อมต่อนาฬิกา...' : 'นาฬิกาหลุด กำลังต่อใหม่...', 'on');
+    }
+    let meta = st.msg || '';
+    if (st.sent) meta += ` • ส่งแล้ว ${st.sent} ครั้ง`;
+    if (st.pending) meta += ` • ค้างส่ง ${st.pending}`;
+    wcMeta(meta);
+    if (!st.measuring) hideLive();
+    if (st.seq && st.seq !== svcSeq){
+      svcSeq = st.seq;
+      showLive(st.hr, st.sys, st.dia, st.spo2);
+      loadVitals();
+      loadDeviceStatus();
+    }
+  }
+  async function svcResume(){
+    if (!SVC_OK) return;
+    try { const st = await svc('getStatus'); if (st.running) svcAttach(); } catch (e) {}
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) svcResume(); });
+
   function cleanupNative(){
     nativeListeners.forEach(l => { try { l && l.remove && l.remove(); } catch (e) {} });
     nativeListeners = [];
@@ -465,6 +566,11 @@
   });
 
   $('wcDisconnect').addEventListener('click', async () => {
+    if (SVC_OK){
+      try { await svc('stop'); } catch (e) {}
+      svcDetach();
+      return;
+    }
     if (IS_APP){
       const id = nativeDeviceId;
       try { if (id) await nat('disconnect', { deviceId: id }); } catch (e) {}
@@ -567,6 +673,7 @@
 
   (async function init(){
     await checkAuth();
+    svcResume();
     await loadVitals();
     await loadDeviceStatus();
     setInterval(loadVitals, 5000); // อัปเดตอัตโนมัติทุก 5 วินาที เหมือนหน้า Dashboard ของหมอ
