@@ -25,7 +25,7 @@ app.use(express.json());
 // เดิมเก็บ session ไว้ในหน่วยความจำของเซิร์ฟเวอร์ → Render ฟรีหลับ/รีสตาร์ต/Deploy แล้วทุกคนหลุดกลับหน้าล็อกอิน
 // แบบนี้ข้อมูล session อยู่ในคุกกี้ของผู้ใช้เอง (แก้ไขไม่ได้เพราะมีลายเซ็น) เซิร์ฟเวอร์รีสตาร์ตแล้วยังล็อกอินอยู่
 // ใช้งานเหมือนเดิม: req.session.user = {...}, req.session.destroy(cb)
-function statelessSession({ secret, cookieName = 'sw_session', maxAgeMs = 8 * 60 * 60 * 1000 }) {
+function statelessSession({ secret, cookieName = 'sw_session', maxAgeMs = 30 * 24 * 60 * 60 * 1000 }) {
   const sign = (b64) => crypto.createHmac('sha256', secret).update(b64).digest('base64url');
 
   function readCookie(req) {
