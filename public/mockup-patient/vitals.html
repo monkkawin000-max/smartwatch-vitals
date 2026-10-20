@@ -462,8 +462,8 @@
 
       const dev = await findWatchNative();
       const id = dev.deviceId;
-      nativeName = dev.name || dev.advName || 'Smart Watch';
-      try { localStorage.setItem('sw_last_ble', id); } catch (e) {}
+      nativeName = dev.name || dev.advName || '---';
+      try { localStorage.setItem('sw_last_ble', id); localStorage.setItem('sw_last_name', nativeName); } catch (e) {}
 
       if (SVC_OK){
         wcStatus('กำลังเริ่มบริการเบื้องหลัง...', 'on');
@@ -513,14 +513,19 @@
     $('wcDisconnect').style.display = 'none';
     try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {}
   }
+  function savedWatchName(){
+    let n = '';
+    try { n = localStorage.getItem('sw_last_name') || ''; } catch (e) {}
+    return n || '---';
+  }
   async function svcPoll(){
     let st;
     try { st = await svc('getStatus'); } catch (e) { return; }
     if (!st.running){ if (svcOn) svcDetach(); return; }
     if (st.state === 'connected'){
-      wcStatus(st.measuring ? 'กำลังวัด... (ค่าสด)' : 'เชื่อมต่อแล้ว (ทำงานเบื้องหลัง)', 'on');
+      wcStatus(st.measuring ? `กำลังวัด... (ค่าสด) • ${savedWatchName()}` : `เชื่อมต่อแล้ว: ${savedWatchName()} (ทำงานเบื้องหลัง)`, 'on');
     } else {
-      wcStatus(st.state === 'connecting' ? 'กำลังเชื่อมต่อนาฬิกา...' : 'นาฬิกาหลุด กำลังต่อใหม่...', 'on');
+      wcStatus(st.state === 'connecting' ? `กำลังเชื่อมต่อ ${savedWatchName()}...` : `${savedWatchName()} หลุด กำลังต่อใหม่...`, 'on');
     }
     let meta = st.msg || '';
     if (st.sent) meta += ` • ส่งแล้ว ${st.sent} ครั้ง`;
