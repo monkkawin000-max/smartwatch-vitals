@@ -107,6 +107,7 @@
       </div>
       <button class="wc-btn primary" id="wcConnect">เชื่อมต่อนาฬิกา</button>
       <button class="wc-btn danger" id="wcDisconnect" style="display:none;">ตัดการเชื่อมต่อ</button>
+      <button class="wc-btn" id="wcChange" style="display:none;margin-top:8px;background:#EEF4F4;color:var(--teal-deep);">เปลี่ยนนาฬิกา</button>
       <div class="wc-hint">
         วิธีใช้: กด "เชื่อมต่อนาฬิกา" → เลือกนาฬิกา → เริ่มวัดที่ตัวนาฬิกา (เมนูวัดหัวใจ) ค่าจะถูกส่งเข้าระบบอัตโนมัติเมื่อวัดเสร็จ<br>
         ใช้ได้เฉพาะ Chrome บน Android • เปิด Bluetooth และ Location ในมือถือ • ต้องเปิดหน้านี้ค้างไว้ตอนวัด
@@ -404,16 +405,24 @@
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   // หานาฬิกา: 1) สแกนอัตโนมัติ หาชื่อขึ้นต้น Y19PRO (หรืออุปกรณ์ที่เคยเชื่อมล่าสุด) 2) ถ้าไม่เจอ แสดงรายการอุปกรณ์ให้เลือกเอง (ไม่กรองชื่อ)
+  let forcePick = false;
   async function findWatchNative(){
-    wcStatus('กำลังค้นหานาฬิกา...', 'on');
-    wcMeta('นาฬิกาต้องเปิดอยู่ อยู่ใกล้มือถือ และไม่ได้เชื่อมกับแอป HiWatchPro');
     let lastId = null;
     try { lastId = localStorage.getItem('sw_last_ble'); } catch (e) {}
+    // ยังไม่เคยเลือกนาฬิกา หรือกด "เปลี่ยนนาฬิกา" → ให้เลือกจากรายการเอง
+    if (forcePick || !lastId){
+      forcePick = false;
+      wcStatus('เลือกนาฬิกาจากรายการ', 'on');
+      wcMeta('เลือกนาฬิกาของคุณ (หาชื่อ Y19PRO หรือรายการที่เป็น Unknown ที่สัญญาณแรงที่สุด) ครั้งต่อไปจะต่อเรือนนี้ให้เอง');
+      return await nat('requestDevice', { scanMode: 2 });
+    }
+    wcStatus('กำลังค้นหานาฬิกาที่เคยเชื่อม...', 'on');
+    wcMeta('นาฬิกาต้องเปิดอยู่ อยู่ใกล้มือถือ และไม่ได้เชื่อมกับแอป HiWatchPro');
     let found = null;
     const lis = Capacitor.addListener(PLUGIN, 'onScanResult', (r) => {
       if (found || !r || !r.device) return;
       const name = advName(r.rawAdvertisement) || r.localName || r.device.name || '';
-      if (/^Y19PRO/i.test(name) || (lastId && r.device.deviceId === lastId)){
+      if (r.device.deviceId === lastId){
         found = { deviceId: r.device.deviceId, name: name || r.device.name, advName: name };
       }
     });
@@ -427,7 +436,7 @@
     }
     if (found) return found;
 
-    wcMeta('ไม่พบอัตโนมัติ — เลือกนาฬิกาจากรายการ (หาชื่อ Y19PRO หรือรายการที่เป็น Unknown ที่สัญญาณแรงที่สุด)');
+    wcMeta('ไม่พบนาฬิกาที่เคยเชื่อม — เลือกจากรายการ (หรือกด "เปลี่ยนนาฬิกา" ถ้าซื้อเรือนใหม่)');
     return await nat('requestDevice', { scanMode: 2 });
   }
 
@@ -563,6 +572,16 @@
       wcStatus('เชื่อมต่อไม่สำเร็จ: ' + err.message, 'err');
       wcMeta('ลองใหม่อีกครั้ง — ตรวจสอบว่าเปิด Bluetooth/Location และนาฬิกาไม่ได้ต่อกับแอปอื่นอยู่');
     }
+  });
+
+  if (IS_APP) $('wcChange').style.display = 'block';
+  $('wcChange').addEventListener('click', async () => {
+    if (!confirm('เปลี่ยนนาฬิกา? ระบบจะตัดการเชื่อมต่อเรือนเดิมและให้เลือกเรือนใหม่')) return;
+    if (SVC_OK){ try { await svc('stop'); } catch (e) {} if (svcOn) svcDetach(); }
+    else if (nativeDeviceId){ try { await nat('disconnect', { deviceId: nativeDeviceId }); } catch (e) {} onDisconnected(); }
+    try { localStorage.removeItem('sw_last_ble'); } catch (e) {}
+    forcePick = true;
+    connectNative();
   });
 
   $('wcDisconnect').addEventListener('click', async () => {
