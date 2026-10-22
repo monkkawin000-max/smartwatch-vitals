@@ -481,9 +481,21 @@ function handleVital(req, res) {
     }
   }
 
-  // กันบันทึกซ้ำ: คนไข้คนเดิม + เวลาวัดเดียวกัน = การวัดรอบเดียวกัน
+  // ค่าที่ไม่ได้ส่งมา (หรือส่งมาเป็น null/ว่าง) = null (ไม่ใช่ 0) — นาฬิกาบางรุ่นวัดทีละอย่าง จึงส่งมาทีละค่าได้
+  const num = (x) => (x === undefined || x === null || x === '' || !isFinite(Number(x)) ? null : Number(x));
+  const hr = num(heartRate), sys = num(systolic), dia = num(diastolic), sp = num(spo2);
+  if ((sys === null) !== (dia === null)) {
+    return res.status(400).json({ error: 'ความดันต้องส่งมาครบทั้ง systolic และ diastolic' });
+  }
+  if (hr === null && sp === null && sys === null) {
+    return res.status(400).json({ error: 'ไม่พบค่าที่วัดได้ (ต้องมี heartRate, spo2 หรือ systolic/diastolic อย่างน้อยหนึ่งอย่าง)' });
+  }
+  const sig = (r) => [r.heartRate != null, r.spo2 != null, r.systolic != null].join();
+
+  // กันบันทึกซ้ำ: คนไข้คนเดิม + เวลาวัดเดียวกัน + ชนิดค่าเดียวกัน = การวัดรอบเดียวกัน
   if (measured) {
-    const dup = vitalRecords.find((r) => r.patientId === patient.patientId && r.measuredAt === measured);
+    const mine = { heartRate: hr, spo2: sp, systolic: sys };
+    const dup = vitalRecords.find((r) => r.patientId === patient.patientId && r.measuredAt === measured && sig(r) === sig(mine));
     if (dup) return res.status(200).json({ success: true, duplicate: true, record: dup });
   }
 
@@ -491,10 +503,10 @@ function handleVital(req, res) {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
     patientId: patient.patientId,
     patientName: patient.name,
-    heartRate: Number(heartRate),
-    systolic: Number(systolic),
-    diastolic: Number(diastolic),
-    spo2: Number(spo2),
+    heartRate: hr,
+    systolic: sys,
+    diastolic: dia,
+    spo2: sp,
     temperature: Number(temperature),
     timestamp: measured || receivedAt, // เวลาที่ใช้แสดง/เรียง/สรุป = เวลาวัดจริง (ถ้ามี)
     measuredAt: measured,              // เวลาวัดจริงตามนาฬิกา (null ถ้าไม่ได้ส่งมา เช่น emulator)
@@ -565,13 +577,18 @@ app.get('/api/vitals/stats/:patientId', (req, res) => {
     return res.json({ hasData: false, count: 0, summary: null, daily: [] });
   }
 
-  const avg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+  // เฉลี่ยเฉพาะรายการที่มีค่านั้นจริง (ข้ามค่าว่าง) — ถ้าไม่มีค่าเลยให้เป็น null
+  const avgOf = (recs, key) => {
+    const v = recs.map((r) => r[key]).filter((x) => x !== null && x !== undefined && isFinite(x));
+    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+  };
+  const rnd = (x) => (x === null ? null : Math.round(x));
   const summary = {
-    avgHeartRate: Math.round(avg(records.map((r) => r.heartRate))),
-    avgSystolic: Math.round(avg(records.map((r) => r.systolic))),
-    avgDiastolic: Math.round(avg(records.map((r) => r.diastolic))),
-    avgSpo2: Math.round(avg(records.map((r) => r.spo2))),
-    avgTemperature: Math.round(avg(records.map((r) => r.temperature)) * 10) / 10,
+    avgHeartRate: rnd(avgOf(records, 'heartRate')),
+    avgSystolic: rnd(avgOf(records, 'systolic')),
+    avgDiastolic: rnd(avgOf(records, 'diastolic')),
+    avgSpo2: rnd(avgOf(records, 'spo2')),
+    avgTemperature: avgOf(records, 'temperature') === null ? null : Math.round(avgOf(records, 'temperature') * 10) / 10,
   };
 
   // จัดกลุ่มตามวัน แล้วเฉลี่ยของแต่ละวัน เรียงจากเก่าไปใหม่
@@ -585,11 +602,11 @@ app.get('/api/vitals/stats/:patientId', (req, res) => {
     const recs = byDate[date];
     return {
       date,
-      avgHeartRate: Math.round(avg(recs.map((r) => r.heartRate))),
-      avgSystolic: Math.round(avg(recs.map((r) => r.systolic))),
-      avgDiastolic: Math.round(avg(recs.map((r) => r.diastolic))),
-      avgSpo2: Math.round(avg(recs.map((r) => r.spo2))),
-      avgTemperature: Math.round(avg(recs.map((r) => r.temperature)) * 10) / 10,
+      avgHeartRate: rnd(avgOf(recs, 'heartRate')),
+      avgSystolic: rnd(avgOf(recs, 'systolic')),
+      avgDiastolic: rnd(avgOf(recs, 'diastolic')),
+      avgSpo2: rnd(avgOf(recs, 'spo2')),
+      avgTemperature: avgOf(recs, 'temperature') === null ? null : Math.round(avgOf(recs, 'temperature') * 10) / 10,
     };
   });
 
@@ -597,9 +614,14 @@ app.get('/api/vitals/stats/:patientId', (req, res) => {
 });
 
 app.get('/api/patients/latest', (req, res) => {
+  // ค่าล่าสุดของแต่ละอย่างแยกกัน (นาฬิกาบางรุ่นวัดทีละอย่าง) — vitalRecords เรียงใหม่สุดก่อนอยู่แล้ว
   const latestByPatient = {};
+  const has = (x) => x !== null && x !== undefined && isFinite(x);
   for (const r of vitalRecords) {
-    if (!latestByPatient[r.patientId]) latestByPatient[r.patientId] = r;
+    const L = latestByPatient[r.patientId] || (latestByPatient[r.patientId] = { any: r, hr: null, bp: null, sp: null });
+    if (!L.hr && has(r.heartRate)) L.hr = r;
+    if (!L.bp && has(r.systolic) && has(r.diastolic)) L.bp = r;
+    if (!L.sp && has(r.spo2)) L.sp = r;
   }
 
   const merged = patients.map((p) => {
@@ -610,12 +632,18 @@ app.get('/api/patients/latest', (req, res) => {
       age: p.age,
       note: p.note,
       hasData: !!latest,
-      heartRate: latest ? latest.heartRate : null,
-      systolic: latest ? latest.systolic : null,
-      diastolic: latest ? latest.diastolic : null,
-      spo2: latest ? latest.spo2 : null,
-      temperature: latest ? latest.temperature : null,
-      timestamp: latest ? latest.timestamp : null,
+      heartRate: latest && latest.hr ? latest.hr.heartRate : null,
+      systolic: latest && latest.bp ? latest.bp.systolic : null,
+      diastolic: latest && latest.bp ? latest.bp.diastolic : null,
+      spo2: latest && latest.sp ? latest.sp.spo2 : null,
+      temperature: latest ? latest.any.temperature : null,
+      timestamp: latest ? latest.any.timestamp : null,
+      // เวลาของค่าแต่ละอย่าง (อาจต่างกันได้ถ้านาฬิกาวัดทีละอย่าง)
+      times: {
+        heartRate: latest && latest.hr ? latest.hr.timestamp : null,
+        bp: latest && latest.bp ? latest.bp.timestamp : null,
+        spo2: latest && latest.sp ? latest.sp.timestamp : null,
+      },
     };
   });
 
