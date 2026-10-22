@@ -117,6 +117,9 @@ jobs:
               static final String ACTION_STOP = "com.monk.smartwatchvitals.STOP";
               static final UUID SERVICE_UUID = UUID.fromString("6e400801-b5a3-f393-e0a9-e50e24dcca9d");
               static final UUID NOTIFY_UUID = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9d");
+              // นาฬิกาแบบที่ 2 (Lefun Health / "SMART WATCH"): service 0x18D0, ตัวรับ 0x2D00 — ส่งผลวัดทีละอย่างตอนวัดเสร็จ
+              static final UUID SERVICE_B_UUID = UUID.fromString("000018d0-0000-1000-8000-00805f9b34fb");
+              static final UUID NOTIFY_B_UUID = UUID.fromString("00002d00-0000-1000-8000-00805f9b34fb");
               static final UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
               static final String CHANNEL_ID = "watch_conn";
               static final int NOTIF_ID = 7101;
@@ -129,6 +132,8 @@ jobs:
               static volatile long lastPacketMs = 0;
               static volatile String clockLabel = "";
               static volatile String lastMsg = "";
+              static volatile String profile = "";   // "A" = Y19PRO (ค่าครบในแพ็กเก็ตเดียว), "B" = วัดทีละอย่าง
+              static volatile String kind = "";      // ผลล่าสุดเป็นชนิดไหน: hr | spo2 | bp (เฉพาะ B)
               static final AtomicInteger sent = new AtomicInteger(0);
               static final ConcurrentLinkedQueue<JSONObject> queue = new ConcurrentLinkedQueue<JSONObject>();
 
@@ -141,6 +146,9 @@ jobs:
               private boolean stopping = false;
               private int backoff = 2000;
               private String lastQueuedAt = null;
+              private volatile boolean useB = false;
+              private String lastBKey = "";
+              private long lastBMs = 0;
 
               private final Runnable reconnectRun = new Runnable() {
                   @Override public void run() { connect(); }
@@ -247,11 +255,18 @@ jobs:
                       try {
                           BluetoothGattService s = g.getService(SERVICE_UUID);
                           BluetoothGattCharacteristic c = s == null ? null : s.getCharacteristic(NOTIFY_UUID);
+                          useB = false;
                           if (c == null) {
-                              setState("reconnecting", "ไม่พบบริการของนาฬิกา ลองใหม่...");
+                              s = g.getService(SERVICE_B_UUID);
+                              c = s == null ? null : s.getCharacteristic(NOTIFY_B_UUID);
+                              useB = c != null;
+                          }
+                          if (c == null) {
+                              setState("reconnecting", "ไม่พบบริการของนาฬิกาที่รองรับ ลองใหม่...");
                               g.disconnect();
                               return;
                           }
+                          profile = useB ? "B" : "A";
                           g.setCharacteristicNotification(c, true);
                           BluetoothGattDescriptor d = c.getDescriptor(CCCD_UUID);
                           if (d != null) {
@@ -278,17 +293,72 @@ jobs:
                   @Override
                   public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic c) {
                       byte[] v = c.getValue();
-                      if (v != null) handlePacket(v);
+                      if (v != null) dispatch(v);
                   }
 
                   // Android 13 ขึ้นไป
                   @Override
                   public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic c, byte[] value) {
-                      if (value != null) handlePacket(value);
+                      if (value != null) dispatch(value);
                   }
               };
 
-              // ---------- แปลงแพ็กเก็ต (ตรงกับฝั่งเว็บ) ----------
+              private void dispatch(byte[] raw) {
+                  if (useB) handlePacketB(raw); else handlePacket(raw);
+              }
+
+              // ---------- นาฬิกาแบบที่ 2: ผลวัดมาทีละอย่าง  5A len 10 type ค่า... checksum ----------
+              // type 01 = หัวใจ (1 ไบต์), 04 = SpO2 (1 ไบต์), 02 = ความดัน (บน, ล่าง)
+              // ในแพ็กเก็ตไม่มีเวลา จึงใช้เวลาที่มือถือรับ (ตอนวัดเสร็จ)
+              private void handlePacketB(byte[] raw) {
+                  int[] d = new int[raw.length];
+                  for (int i = 0; i < raw.length; i++) d[i] = raw[i] & 0xFF;
+                  if (d.length < 6 || d[0] != 0x5A || d[1] != d.length || d[2] != 0x10) return;
+                  int type = d[3];
+                  JSONObject o = new JSONObject();
+                  String k;
+                  try {
+                      if (type == 0x01) {
+                          int h = d[4];
+                          if (h < 30 || h > 220) return;
+                          hr = h; k = "hr"; o.put("heartRate", h);
+                      } else if (type == 0x04) {
+                          int sp = d[4];
+                          if (sp < 70 || sp > 100) return;
+                          spo2 = sp; k = "spo2"; o.put("spo2", sp);
+                      } else if (type == 0x02 && d.length >= 7) {
+                          int sy = d[4], di = d[5];
+                          if (sy < 60 || sy > 250 || di < 30 || di > 150) return;
+                          sys = sy; dia = di; k = "bp"; o.put("systolic", sy); o.put("diastolic", di);
+                      } else {
+                          return;
+                      }
+                      long now = System.currentTimeMillis();
+                      String key = k + ":" + d[4] + (d.length >= 7 ? ":" + d[5] : "");
+                      if (key.equals(lastBKey) && now - lastBMs < 3000) return; // แพ็กเก็ตซ้ำ
+                      lastBKey = key; lastBMs = now;
+
+                      SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
+                      f.setTimeZone(TimeZone.getTimeZone("UTC"));
+                      o.put("temperature", JSONObject.NULL);
+                      o.put("measuredAt", f.format(new java.util.Date(now)));
+                      kind = k;
+                      lastPacketMs = now;
+                      seq++;
+                      StringBuilder sb = new StringBuilder();
+                      if (hr > 0) sb.append("HR ").append(hr);
+                      if (sys > 0) sb.append(sb.length() > 0 ? " • " : "").append("BP ").append(sys).append("/").append(dia);
+                      if (spo2 > 0) sb.append(sb.length() > 0 ? " • " : "").append("SpO2 ").append(spo2).append("%");
+                      updateNotif(sb.toString());
+                      queue.add(o);
+                      while (queue.size() > 500) queue.poll();
+                  } catch (Exception e) {
+                      return;
+                  }
+                  flush();
+              }
+
+              // ---------- แปลงแพ็กเก็ตนาฬิกาแบบที่ 1 Y19PRO (ตรงกับฝั่งเว็บ) ----------
               private void handlePacket(byte[] raw) {
                   int[] d = new int[raw.length];
                   for (int i = 0; i < raw.length; i++) d[i] = raw[i] & 0xFF;
@@ -537,7 +607,10 @@ jobs:
                   o.put("pending", WatchService.queue.size());
                   o.put("msg", WatchService.lastMsg);
                   o.put("clock", WatchService.clockLabel);
-                  o.put("measuring", System.currentTimeMillis() - WatchService.lastPacketMs < 6000 && WatchService.seq > 0);
+                  o.put("profile", WatchService.profile);
+                  o.put("kind", WatchService.kind);
+                  // ค่าสดระหว่างวัดมีเฉพาะนาฬิกาแบบที่ 1 (Y19PRO)
+                  o.put("measuring", "A".equals(WatchService.profile) && System.currentTimeMillis() - WatchService.lastPacketMs < 6000 && WatchService.seq > 0);
                   call.resolve(o);
               }
           }
