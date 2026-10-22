@@ -33,6 +33,8 @@
   .stat .l{ font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-dim); margin-bottom:4px; }
   .stat .v{ font-family:var(--mono); font-size:24px; font-weight:700; }
   .stat .u{ font-size:11px; color:var(--ink-dim); margin-left:2px; }
+  .stat .t{ font-size:11px; color:var(--ink-dim); margin-top:4px; }
+  .stat.none .v{ color:#A9B8B6; }
   .stat.ok .v{ color:var(--teal-deep); }
   .stat.abn .v{ color: var(--danger); }
 
@@ -157,11 +159,22 @@
     window.location.href = 'login.html';
   });
 
+  // ค่าอาจเป็น null ได้ (นาฬิกาบางรุ่นวัดทีละอย่าง) — ไม่มีค่า = ไม่ผิดปกติ
+  const hasVal = (x) => x !== null && x !== undefined && isFinite(x);
   function isAbnormal(field, r){
-    if (field === 'hr') return r.heartRate < 50 || r.heartRate > 120;
-    if (field === 'sys') return r.systolic > 160 || r.systolic < 90;
-    if (field === 'spo2') return r.spo2 < 92;
+    if (!r) return false;
+    if (field === 'hr') return hasVal(r.heartRate) && (r.heartRate < 50 || r.heartRate > 120);
+    if (field === 'sys') return hasVal(r.systolic) && (r.systolic > 160 || r.systolic < 90);
+    if (field === 'spo2') return hasVal(r.spo2) && r.spo2 < 92;
     return false;
+  }
+  // ป้ายเวลาของค่าแต่ละอย่าง: วันนี้แสดงแค่เวลา วันอื่นแสดงวันที่ด้วย
+  function whenLabel(ts){
+    const d = new Date(ts);
+    const now = new Date();
+    const hhmm = d.toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit', hour12:false });
+    if (d.toDateString() === now.toDateString()) return 'วัดเมื่อ ' + hhmm;
+    return 'วัดเมื่อ ' + d.toLocaleDateString('th-TH', { day:'numeric', month:'short' }) + ' ' + hhmm;
   }
 
 
@@ -195,20 +208,34 @@
     const latest = sorted[0];
     $('syncSub').textContent = `ซิงค์ล่าสุด: ${new Date(latest.timestamp).toLocaleString('th-TH')}`;
 
-    $('statRow').innerHTML = `
-      <div class="stat ${isAbnormal('hr',latest)?'abn':'ok'}"><div class="l">Heart Rate</div><div class="v">${latest.heartRate}<span class="u">bpm</span></div></div>
-      <div class="stat ${isAbnormal('spo2',latest)?'abn':'ok'}"><div class="l">SpO2</div><div class="v">${latest.spo2}<span class="u">%</span></div></div>
-      <div class="stat wide ${isAbnormal('sys',latest)?'abn':'ok'}"><div class="l">Blood Pressure</div><div class="v">${latest.systolic}/${latest.diastolic}<span class="u">mmHg</span></div></div>
-    `;
+    // ค่าล่าสุดของแต่ละอย่างแยกกัน (หาจากรายการล่าสุดที่ "มีค่านั้น") พร้อมเวลาของแต่ละค่า
+    const lastHR  = sorted.find(r => hasVal(r.heartRate));
+    const lastSp  = sorted.find(r => hasVal(r.spo2));
+    const lastBP  = sorted.find(r => hasVal(r.systolic) && hasVal(r.diastolic));
+    const card = (cls, label, rec, valHtml, unit, field) => rec
+      ? `<div class="stat ${cls} ${isAbnormal(field,rec)?'abn':'ok'}"><div class="l">${label}</div><div class="v">${valHtml}<span class="u">${unit}</span></div><div class="t">${whenLabel(rec.timestamp)}</div></div>`
+      : `<div class="stat ${cls} none"><div class="l">${label}</div><div class="v">--<span class="u">${unit}</span></div><div class="t">ยังไม่มีค่า</div></div>`;
+    $('statRow').innerHTML =
+      card('', 'Heart Rate', lastHR, lastHR && lastHR.heartRate, 'bpm', 'hr') +
+      card('', 'SpO2', lastSp, lastSp && lastSp.spo2, '%', 'spo2') +
+      card('wide', 'Blood Pressure', lastBP, lastBP && (lastBP.systolic + '/' + lastBP.diastolic), 'mmHg', 'sys');
 
-    chartRecent = [...records].slice(0, 30).reverse(); // เก่า -> ใหม่ สำหรับกราฟ
+    chartAll = [...records].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp)); // เก่า -> ใหม่
     renderChart();
   }
 
   // ----- กราฟใบเดียว สลับแท็บ HR / BP / SpO2 -----
+  let chartAll = [];
   let chartRecent = [];
   let chartTab = 'hr';
   const CHART_TITLES = { hr:'Heart Rate ล่าสุด (bpm)', bp:'Blood Pressure ล่าสุด (mmHg)', spo2:'SpO2 ล่าสุด (%)' };
+  // เลือกเฉพาะรายการที่มีค่าของแท็บนั้น แล้วเอา 30 จุดล่าสุด
+  function seriesFor(tab){
+    const ok = tab === 'bp' ? (r => hasVal(r.systolic) && hasVal(r.diastolic))
+             : tab === 'spo2' ? (r => hasVal(r.spo2))
+             : (r => hasVal(r.heartRate));
+    return chartAll.filter(ok).slice(-30);
+  }
   function chartDatasets(){
     const line = (data, color, fill) => ({ data, borderColor:color, backgroundColor: color + '22', tension:0.35, pointRadius:3, fill, borderWidth:2 });
     if (chartTab === 'bp') return [line(chartRecent.map(r => r.systolic), '#0E7C86', true), line(chartRecent.map(r => r.diastolic), '#E8A33D', false)];
@@ -216,6 +243,7 @@
     return [line(chartRecent.map(r => r.heartRate), '#0E7C86', true)];
   }
   function renderChart(){
+    chartRecent = seriesFor(chartTab);
     const labels = chartRecent.map(r => new Date(r.timestamp).toLocaleTimeString('th-TH', { hour12:false }));
     $('chartTitle').textContent = CHART_TITLES[chartTab];
     if (hrChart){
@@ -259,7 +287,7 @@
   // บริการเบื้องหลัง (ปลั๊กอิน WatchBridge) — ถ้าไม่มี จะใช้วิธีเดิมผ่าน BluetoothLe
   const SVC_OK = IS_APP && typeof Capacitor.isPluginAvailable === 'function' && Capacitor.isPluginAvailable('WatchBridge');
   const svc = (m, o) => Capacitor.nativePromise('WatchBridge', m, o || {});
-  let svcTimer = null, svcSeq = 0, svcOn = false;
+  let svcTimer = null, svcSeq = 0, svcOn = false, svcNote = '';
   const nat = (method, opts) => Capacitor.nativePromise(PLUGIN, method, opts || {});
   let nativeDeviceId = null, nativeName = '', nativeConnected = false, nativeListeners = [];
 
@@ -527,14 +555,21 @@
     } else {
       wcStatus(st.state === 'connecting' ? `กำลังเชื่อมต่อ ${savedWatchName()}...` : `${savedWatchName()} หลุด กำลังต่อใหม่...`, 'on');
     }
-    let meta = st.msg || '';
+    let meta = (svcNote ? svcNote + ' • ' : '') + (st.msg || '');
+    if (st.profile === 'B' && st.state === 'connected' && !svcNote) meta = 'วัดที่ตัวนาฬิกา ผลจะส่งเข้าระบบเมื่อวัดเสร็จ' + (st.msg ? ' • ' + st.msg : '');
     if (st.sent) meta += ` • ส่งแล้ว ${st.sent} ครั้ง`;
     if (st.pending) meta += ` • ค้างส่ง ${st.pending}`;
     wcMeta(meta);
     if (!st.measuring) hideLive();
     if (st.seq && st.seq !== svcSeq){
       svcSeq = st.seq;
-      showLive(st.hr, st.sys, st.dia, st.spo2);
+      if (st.profile === 'B'){
+        // นาฬิกาแบบวัดทีละอย่าง: ไม่มีค่าสดระหว่างวัด แสดงเป็นผลวัดที่เพิ่งได้
+        const t = st.kind === 'hr' ? `HR ${st.hr}` : st.kind === 'spo2' ? `SpO2 ${st.spo2}%` : `BP ${st.sys}/${st.dia}`;
+        svcNote = 'ได้ผลวัดใหม่: ' + t;
+      } else {
+        showLive(st.hr, st.sys, st.dia, st.spo2);
+      }
       loadVitals();
       loadDeviceStatus();
     }
