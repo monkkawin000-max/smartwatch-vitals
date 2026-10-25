@@ -46,7 +46,7 @@
   table{ width:100%; border-collapse:collapse; margin-top:10px; }
   th, td{ text-align:center; padding:9px 6px; font-size:12.5px; border-bottom:1px solid var(--line); }
   th{ font-size:10.5px; text-transform:uppercase; color:var(--ink-dim); background:var(--teal-soft); }
-  .summary-row{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:16px; }
+  .summary-row{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:16px; }
   .summary-row .box{ background:var(--teal-soft); border-radius:10px; padding:10px; text-align:center; }
   .summary-row .l{ font-size:10px; color:var(--teal-deep); text-transform:uppercase; }
   .summary-row .v{ font-family:var(--mono); font-size:17px; font-weight:700; }
@@ -105,7 +105,7 @@
       <div id="dataBox" style="display:none;">
         <div class="summary-row" id="summaryRow"></div>
         <table>
-          <thead><tr><th>วันที่</th><th>HR</th><th>BP</th><th>SpO2</th><th>Temp</th></tr></thead>
+          <thead><tr><th>วันที่</th><th>HR</th><th>BP</th><th>SpO2</th></tr></thead>
           <tbody id="dailyBody"></tbody>
         </table>
         <button class="btn" style="margin-top:18px;" id="printBtn">🖨 พิมพ์ / บันทึกเป็น PDF</button>
@@ -193,22 +193,27 @@
     }
   });
 
+  // ค่าเฉลี่ยอาจเป็น null ถ้าช่วงนั้นไม่มีการวัดค่านั้นเลย — แสดง "ไม่มีข้อมูล" (ไม่แสดง 0 เพราะอาจถูกอ่านเป็นค่าจริง)
+  const has = (x) => x !== null && x !== undefined && isFinite(x);
+  const NA = 'ไม่มีข้อมูล';
+  const fHR = (x) => has(x) ? x + ' bpm' : NA;
+  const fBP = (a, b) => (has(a) && has(b)) ? a + '/' + b : NA;
+  const fSp = (x) => has(x) ? x + '%' : NA;
+
   function renderSummary(s){
     $('summaryRow').innerHTML = `
-      <div class="box"><div class="l">HR เฉลี่ย</div><div class="v">${s.avgHeartRate} bpm</div></div>
-      <div class="box"><div class="l">BP เฉลี่ย</div><div class="v">${s.avgSystolic}/${s.avgDiastolic}</div></div>
-      <div class="box"><div class="l">SpO2 เฉลี่ย</div><div class="v">${s.avgSpo2}%</div></div>
-      <div class="box"><div class="l">Temp เฉลี่ย</div><div class="v">${s.avgTemperature}°C</div></div>`;
+      <div class="box"><div class="l">HR เฉลี่ย</div><div class="v">${fHR(s.avgHeartRate)}</div></div>
+      <div class="box"><div class="l">BP เฉลี่ย</div><div class="v">${fBP(s.avgSystolic, s.avgDiastolic)}</div></div>
+      <div class="box"><div class="l">SpO2 เฉลี่ย</div><div class="v">${fSp(s.avgSpo2)}</div></div>`;
   }
 
   function renderDaily(daily){
     $('dailyBody').innerHTML = daily.map(d => `
       <tr>
         <td>${fmtDate(d.date)}</td>
-        <td>${d.avgHeartRate}</td>
-        <td>${d.avgSystolic}/${d.avgDiastolic}</td>
-        <td>${d.avgSpo2}%</td>
-        <td>${d.avgTemperature}°C</td>
+        <td>${has(d.avgHeartRate) ? d.avgHeartRate : NA}</td>
+        <td>${fBP(d.avgSystolic, d.avgDiastolic)}</td>
+        <td>${fSp(d.avgSpo2)}</td>
       </tr>`).join('');
   }
 

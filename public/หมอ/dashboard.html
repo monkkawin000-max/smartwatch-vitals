@@ -93,6 +93,7 @@
   .alert-summary .pill.p2{ background:#FDECEC; color:#B02F2F; }
   .alert-summary .pill.p1{ background:#FDF3E3; color:#8A5A0A; }
   .alert-summary .pill.p0{ background:#E3F3EF; color:#1F7A68; }
+  .stat .t{ font-size:11px; color:var(--ink-dim); margin-top:4px; }
 </style>
 </head>
 <body>
@@ -121,9 +122,9 @@
         <div class="name" id="dName">—</div>
         <div class="alert-bar" id="dAlert" style="display:none;"></div>
         <div class="stat-row">
-          <div class="stat"><div class="l">Heart Rate</div><div class="v" id="dHR">--<span class="u">bpm</span></div></div>
-          <div class="stat"><div class="l">Blood Pressure</div><div class="v" id="dBP">--/--<span class="u">mmHg</span></div></div>
-          <div class="stat"><div class="l">SpO2</div><div class="v" id="dSpo2">--<span class="u">%</span></div></div>
+          <div class="stat"><div class="l">Heart Rate</div><div class="v" id="dHR">--<span class="u">bpm</span></div><div class="t" id="dHRt"></div></div>
+          <div class="stat"><div class="l">Blood Pressure</div><div class="v" id="dBP">--/--<span class="u">mmHg</span></div><div class="t" id="dBPt"></div></div>
+          <div class="stat"><div class="l">SpO2</div><div class="v" id="dSpo2">--<span class="u">%</span></div><div class="t" id="dSpo2t"></div></div>
         </div>
       </div>
       <div class="chart-grid" id="chartGrid">
@@ -157,8 +158,22 @@
   // ----- เกณฑ์ระดับการแจ้งเตือน (ค่าตั้งต้นตัวอย่าง — ปรับตามแพทย์ได้) -----
   // 0 = ปกติ, 1 = ผิดปกติเล็กน้อย (เหลือง !), 2 = ผิดปกติมาก (แดง !!)
 
+  // ค่าอาจเป็น null (นาฬิกาบางรุ่นวัดทีละอย่าง) — ไม่มีค่า = ไม่นับว่าผิดปกติ และต้องไม่แสดงเป็น null/0
+  const hasVal = (x) => x !== null && x !== undefined && isFinite(x);
+  const showVal = (x, suffix) => hasVal(x) ? x + (suffix || '') : '--';
+  const showBP = (r) => (hasVal(r.systolic) && hasVal(r.diastolic)) ? r.systolic + '/' + r.diastolic : '--';
+  const timeShort = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts), now = new Date();
+    const hhmm = d.toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit', hour12:false });
+    return d.toDateString() === now.toDateString() ? 'วัดเมื่อ ' + hhmm : 'วัดเมื่อ ' + d.toLocaleDateString('th-TH', { day:'numeric', month:'short' }) + ' ' + hhmm;
+  };
+
   function levelOf(field, r){
     if (!r || !r.hasData) return 0;
+    if (field === 'hr' && !hasVal(r.heartRate)) return 0;
+    if (field === 'sys' && !hasVal(r.systolic)) return 0;
+    if (field === 'spo2' && !hasVal(r.spo2)) return 0;
     if (field === 'hr'){ const v = r.heartRate; if (v < 50 || v > 120) return 2; if (v < 60 || v > 100) return 1; return 0; }
     if (field === 'sys'){ const v = r.systolic; if (v < 90 || v > 160) return 2; if (v < 100 || v > 140) return 1; return 0; }
     if (field === 'spo2'){ const v = r.spo2; if (v < 92) return 2; if (v < 95) return 1; return 0; }
@@ -225,9 +240,9 @@
         </div>
         ${r.hasData ? `
         <div class="p-mini">
-          <div><div class="v ${cls('hr',r)}">${r.heartRate}</div><div class="l">HR</div></div>
-          <div><div class="v ${cls('sys',r)}">${r.systolic}/${r.diastolic}</div><div class="l">BP</div></div>
-          <div><div class="v ${cls('spo2',r)}">${r.spo2}%</div><div class="l">SpO2</div></div>
+          <div><div class="v ${cls('hr',r)}">${showVal(r.heartRate)}</div><div class="l">HR</div></div>
+          <div><div class="v ${cls('sys',r)}">${showBP(r)}</div><div class="l">BP</div></div>
+          <div><div class="v ${cls('spo2',r)}">${showVal(r.spo2, '%')}</div><div class="l">SpO2</div></div>
         </div>
         ${lv > 0 ? `<div class="p-alert a${lv}"><b>${LEVEL_TITLE[lv]}</b>${issues.map(x => x.text).join(' • ')}</div>` : ''}
         <div class="time">${new Date(r.timestamp).toLocaleString('th-TH')}${sd ? ` <span class="stale">· ข้อมูลเก่า ${sd} วัน</span>` : ''}</div>
@@ -290,18 +305,35 @@
     $('chartGrid').style.display = '';
     $('noDataMsg').style.display = 'none';
 
-    records = records.slice(0, 20).reverse();
-    const latest = records[records.length - 1];
-    const lr = { ...latest, hasData: true };
+    // records เรียงใหม่สุดก่อน — ค่าล่าสุดของแต่ละอย่างหาจากรายการล่าสุดที่ "มีค่านั้น" (นาฬิกาบางรุ่นวัดทีละอย่าง)
+    const lastHR = records.find(r => hasVal(r.heartRate));
+    const lastSp = records.find(r => hasVal(r.spo2));
+    const lastBP = records.find(r => hasVal(r.systolic) && hasVal(r.diastolic));
+    const newest = records[0];
+    const lr = {
+      hasData: true,
+      heartRate: lastHR ? lastHR.heartRate : null,
+      spo2: lastSp ? lastSp.spo2 : null,
+      systolic: lastBP ? lastBP.systolic : null,
+      diastolic: lastBP ? lastBP.diastolic : null,
+    };
+    // แต่ละกราฟใช้เฉพาะรายการที่มีค่านั้น (ใหม่สุด 20 จุด เรียงเก่า -> ใหม่)
+    const series = (ok) => records.filter(ok).slice(0, 20).reverse();
+    const sHR = series(r => hasVal(r.heartRate));
+    const sSp = series(r => hasVal(r.spo2));
+    const sBP = series(r => hasVal(r.systolic) && hasVal(r.diastolic));
 
-    $('dPid').textContent = latest.patientId;
-    $('dName').textContent = latest.patientName;
-    $('dHR').innerHTML = latest.heartRate + '<span class="u">bpm</span>';
+    $('dPid').textContent = newest.patientId;
+    $('dName').textContent = newest.patientName;
+    $('dHR').innerHTML = showVal(lr.heartRate) + '<span class="u">bpm</span>';
     $('dHR').className = 'v ' + cls('hr', lr);
-    $('dBP').innerHTML = latest.systolic + '/' + latest.diastolic + '<span class="u">mmHg</span>';
+    $('dHRt').textContent = lastHR ? timeShort(lastHR.timestamp) : 'ยังไม่มีค่า';
+    $('dBP').innerHTML = showBP(lr) + '<span class="u">mmHg</span>';
     $('dBP').className = 'v ' + cls('sys', lr);
-    $('dSpo2').innerHTML = latest.spo2 + '<span class="u">%</span>';
+    $('dBPt').textContent = lastBP ? timeShort(lastBP.timestamp) : 'ยังไม่มีค่า';
+    $('dSpo2').innerHTML = showVal(lr.spo2) + '<span class="u">%</span>';
     $('dSpo2').className = 'v ' + cls('spo2', lr);
+    $('dSpo2t').textContent = lastSp ? timeShort(lastSp.timestamp) : 'ยังไม่มีค่า';
 
     // แถบแจ้งเตือนของคนไข้ที่เลือก
     const lv = patientLevel(lr);
@@ -314,11 +346,11 @@
     }
 
     ensureCharts();
-    const labels = records.map(r => new Date(r.timestamp).toLocaleTimeString('th-TH', { hour12:false }));
+    const lab = (arr) => arr.map(r => new Date(r.timestamp).toLocaleTimeString('th-TH', { hour12:false }));
 
-    charts.hr.data.labels = labels; charts.hr.data.datasets[0].data = records.map(r => r.heartRate); charts.hr.update();
-    charts.sys.data.labels = labels; charts.sys.data.datasets[0].data = records.map(r => r.systolic); charts.sys.data.datasets[1].data = records.map(r => r.diastolic); charts.sys.update();
-    charts.spo2.data.labels = labels; charts.spo2.data.datasets[0].data = records.map(r => r.spo2); charts.spo2.update();
+    charts.hr.data.labels = lab(sHR); charts.hr.data.datasets[0].data = sHR.map(r => r.heartRate); charts.hr.update();
+    charts.sys.data.labels = lab(sBP); charts.sys.data.datasets[0].data = sBP.map(r => r.systolic); charts.sys.data.datasets[1].data = sBP.map(r => r.diastolic); charts.sys.update();
+    charts.spo2.data.labels = lab(sSp); charts.spo2.data.datasets[0].data = sSp.map(r => r.spo2); charts.spo2.update();
   }
 
   async function tick(){
