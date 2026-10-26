@@ -1,0 +1,77 @@
+name: Build Doctor APK
+
+# แอปหมอ (ห่อหน้าเว็บ ไม่มี Bluetooth) → ไฟล์ vitals-doctor.apk
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-doctor.yml'
+
+env:
+  DOCTOR_URL: https://smartwatch-vitals.onrender.com/%E0%B8%AB%E0%B8%A1%E0%B8%AD/login.html
+
+jobs:
+  # ----- แอปหมอ: ห่อหน้าเว็บหมอ ไม่มี Bluetooth ไม่มีบริการเบื้องหลัง (แยกแอป แยกที่เก็บล็อกอินจากแอปคนไข้) -----
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: สร้างโปรเจกต์แอปหมอ
+        run: |
+          mkdir app-doctor && cd app-doctor
+          mkdir www
+          cat > package.json <<'JSON'
+          {
+            "name": "smartwatch-vitals-doctor",
+            "version": "0.1.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/android": "^6.0.0",
+              "@capacitor/cli": "^6.0.0",
+              "@capacitor/core": "^6.0.0"
+            }
+          }
+          JSON
+          cat > capacitor.config.json <<JSON
+          {
+            "appId": "com.monk.smartwatchvitals.doctor",
+            "appName": "Vitals Doctor",
+            "webDir": "www",
+            "server": { "url": "${DOCTOR_URL}", "cleartext": false }
+          }
+          JSON
+          cat > www/index.html <<HTML
+          <!doctype html>
+          <html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Vitals Doctor</title></head>
+          <body style="font-family:sans-serif;text-align:center;padding:40px">
+          <h2>Vitals Doctor</h2><p>เปิดแอปไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง</p>
+          <a href="${DOCTOR_URL}">เปิดหน้าเข้าสู่ระบบ</a></body></html>
+          HTML
+
+      - name: ติดตั้งและสร้างโปรเจกต์ Android
+        working-directory: app-doctor
+        run: |
+          npm install
+          npx cap add android
+
+      - name: สร้างไฟล์ APK
+        working-directory: app-doctor/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: ตั้งชื่อไฟล์ APK
+        run: cp app-doctor/android/app/build/outputs/apk/debug/app-debug.apk vitals-doctor.apk
+
+      - name: อัปโหลด APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitals-doctor-apk
+          path: vitals-doctor.apk

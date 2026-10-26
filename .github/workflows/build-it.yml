@@ -1,0 +1,77 @@
+name: Build IT APK
+
+# แอป IT (ห่อหน้าเว็บ ไม่มี Bluetooth) → ไฟล์ vitals-it.apk
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-it.yml'
+
+env:
+  IT_URL: https://smartwatch-vitals.onrender.com/mockup-it/login.html
+
+jobs:
+  # ----- แอป IT: ห่อหน้าเว็บ IT ไม่มี Bluetooth ไม่มีบริการเบื้องหลัง (แยกแอป แยกที่เก็บล็อกอินจากแอปคนไข้) -----
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: สร้างโปรเจกต์แอป IT
+        run: |
+          mkdir app-it && cd app-it
+          mkdir www
+          cat > package.json <<'JSON'
+          {
+            "name": "smartwatch-vitals-it",
+            "version": "0.1.0",
+            "private": true,
+            "dependencies": {
+              "@capacitor/android": "^6.0.0",
+              "@capacitor/cli": "^6.0.0",
+              "@capacitor/core": "^6.0.0"
+            }
+          }
+          JSON
+          cat > capacitor.config.json <<JSON
+          {
+            "appId": "com.monk.smartwatchvitals.it",
+            "appName": "Vitals IT",
+            "webDir": "www",
+            "server": { "url": "${IT_URL}", "cleartext": false }
+          }
+          JSON
+          cat > www/index.html <<HTML
+          <!doctype html>
+          <html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>Vitals IT</title></head>
+          <body style="font-family:sans-serif;text-align:center;padding:40px">
+          <h2>Vitals IT</h2><p>เปิดแอปไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง</p>
+          <a href="${IT_URL}">เปิดหน้าเข้าสู่ระบบ</a></body></html>
+          HTML
+
+      - name: ติดตั้งและสร้างโปรเจกต์ Android
+        working-directory: app-it
+        run: |
+          npm install
+          npx cap add android
+
+      - name: สร้างไฟล์ APK
+        working-directory: app-it/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: ตั้งชื่อไฟล์ APK
+        run: cp app-it/android/app/build/outputs/apk/debug/app-debug.apk vitals-it.apk
+
+      - name: อัปโหลด APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitals-it-apk
+          path: vitals-it.apk
