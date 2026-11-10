@@ -49,6 +49,8 @@
          padding:5px 11px; border-radius:8px; cursor:pointer; }
   .ctab.active{ background:var(--teal-soft); border-color:var(--teal-soft); color:var(--teal-deep); }
 
+  .dotlegend{ display:flex; gap:14px; justify-content:center; flex-wrap:wrap; font-size:12px; color:var(--ink-dim); padding:6px 0 0; }
+  .dotlegend i{ display:inline-block; width:11px; height:11px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
   .info{ font-size:11.5px; color:var(--ink-dim); text-align:center; padding:10px; }
 
   .empty-box{ text-align:center; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:36px 24px; }
@@ -135,7 +137,12 @@
         </div>
         <canvas id="chartHR"></canvas>
       </div>
-      <div class="info">แสดงข้อมูล 30 ครั้งล่าสุดที่นาฬิกาซิงค์เข้ามา</div>
+      <div class="dotlegend">
+        <span><i style="background:#3FA796"></i>ปกติ</span>
+        <span><i style="background:#E8A33D"></i>เฝ้าสังเกต</span>
+        <span><i style="background:#D64545"></i>ผิดปกติมาก</span>
+      </div>
+      <div class="info">แสดงข้อมูล 30 ครั้งล่าสุดที่นาฬิกาซิงค์เข้ามา · จุดแต่ละจุดคือผลวัดหนึ่งครั้ง สีตามระดับของค่า</div>
     </div>
   </div>
 
@@ -161,6 +168,14 @@
 
   // ค่าอาจเป็น null ได้ (นาฬิกาบางรุ่นวัดทีละอย่าง) — ไม่มีค่า = ไม่ผิดปกติ
   const hasVal = (x) => x !== null && x !== undefined && isFinite(x);
+  /* ===== LEVELS-BLOCK: เกณฑ์ระดับ (ค่าตั้งต้นตัวอย่าง — ต้องตรงกับหน้า dashboard/patient ของหมอ) =====
+     0 = ปกติ (เขียว), 1 = ผิดปกติเล็กน้อย (เหลือง), 2 = ผิดปกติมาก (แดง) */
+  const lvHR   = (v) => !hasVal(v) ? 0 : (v < 50 || v > 120) ? 2 : (v < 60 || v > 100) ? 1 : 0;
+  const lvSys  = (v) => !hasVal(v) ? 0 : (v < 90 || v > 160) ? 2 : (v < 100 || v > 140) ? 1 : 0;
+  const lvSpo2 = (v) => !hasVal(v) ? 0 : (v < 92) ? 2 : (v < 95) ? 1 : 0;
+  const LV_COLOR = { 0:'#3FA796', 1:'#E8A33D', 2:'#D64545' };
+  const LV_NAME  = { 0:'ปกติ', 1:'เฝ้าสังเกต', 2:'ผิดปกติมาก' };
+  /* ===== END LEVELS-BLOCK ===== */
   function isAbnormal(field, r){
     if (!r) return false;
     if (field === 'hr') return hasVal(r.heartRate) && (r.heartRate < 50 || r.heartRate > 120);
@@ -236,8 +251,18 @@
              : (r => hasVal(r.heartRate));
     return chartAll.filter(ok).slice(-30);
   }
+  // ระดับของผลวัดแต่ละครั้ง (ความดันใช้ค่าตัวบนตัดสินทั้งตัวบนและตัวล่าง)
+  function levelForTab(r){
+    if (chartTab === 'bp') return lvSys(r.systolic);
+    if (chartTab === 'spo2') return lvSpo2(r.spo2);
+    return lvHR(r.heartRate);
+  }
   function chartDatasets(){
-    const line = (data, color, fill) => ({ data, borderColor:color, backgroundColor: color + '22', tension:0.35, pointRadius:3, fill, borderWidth:2 });
+    // เส้นยังเป็นสีเดิม แต่จุดแต่ละจุดเปลี่ยนสี เขียว/เหลือง/แดง ตามผลวัดครั้งนั้น
+    const colors = chartRecent.map(r => LV_COLOR[levelForTab(r)]);
+    const rad = chartRecent.length <= 30 ? 4 : 3;
+    const line = (data, color, fill) => ({ data, borderColor:color, backgroundColor: color + '22', tension:0.35, fill, borderWidth:2,
+      pointRadius:rad, pointHoverRadius:rad + 2, pointBackgroundColor:colors, pointBorderColor:colors, pointBorderWidth:1 });
     if (chartTab === 'bp') return [line(chartRecent.map(r => r.systolic), '#0E7C86', true), line(chartRecent.map(r => r.diastolic), '#E8A33D', false)];
     if (chartTab === 'spo2') return [line(chartRecent.map(r => r.spo2), '#3FA796', true)];
     return [line(chartRecent.map(r => r.heartRate), '#0E7C86', true)];
@@ -257,9 +282,16 @@
         data: { labels, datasets: chartDatasets() },
         options: {
           responsive: true, maintainAspectRatio: false,
-          plugins: { legend: { display:false } },
+          plugins: {
+            legend: { display:false },
+            tooltip: { callbacks: {
+              title: (items) => { const r = chartRecent[items[0].dataIndex]; return r ? new Date(r.timestamp).toLocaleString('th-TH') : ''; },
+              label: (item) => { const n = chartTab === 'bp' ? (item.datasetIndex === 0 ? 'ตัวบน' : 'ตัวล่าง') : (chartTab === 'spo2' ? 'SpO2' : 'HR'); return n + ': ' + item.parsed.y; },
+              afterLabel: (item) => { const r = chartRecent[item.dataIndex]; return r ? 'ระดับ' + (chartTab === 'bp' ? ' (ตามความดันตัวบน)' : '') + ': ' + LV_NAME[levelForTab(r)] : ''; },
+            } },
+          },
           scales: {
-            x: { ticks: { font: { size: 9 } }, grid: { display:false } },
+            x: { ticks: { font: { size: 9 }, maxTicksLimit: 8, maxRotation: 0 }, grid: { display:false } },
             y: { ticks: { font: { size: 10 } }, grid: { color: '#EEF3F2' } },
           },
         }
