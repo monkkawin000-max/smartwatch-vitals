@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ข้อมูลคนไข้ — Doctor</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#EEF3F2; --card:#FFFFFF; --ink:#17313E; --ink-dim:#5B7280;
+    --teal:#0E7C86; --teal-deep:#0B5E66; --teal-soft:#DCEEEC;
+    --amber:#E8A33D; --danger:#D64545; --line:#DCE6E4;
+    --mono:'JetBrains Mono',Consolas,monospace; --sans:'Space Grotesk','Segoe UI',sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); padding-bottom:60px; }
+
+  .nav{ background:var(--card); border-bottom:1px solid var(--line); padding:12px 20px; display:flex;
+        align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+  .nav .who{ font-size:13px; font-weight:700; }
+  .nav .who span{ display:block; font-size:11px; font-weight:400; color:var(--ink-dim); }
+  .tabs{ display:flex; gap:4px; flex-wrap:wrap; }
+  .tabs a{ text-decoration:none; font-size:12px; padding:7px 12px; border-radius:9px; color:var(--ink-dim); white-space:nowrap; }
+  .tabs a.active{ background:var(--teal-soft); color:var(--teal-deep); font-weight:700; }
+  .logout{ font-size:12px; color:var(--danger); text-decoration:none; cursor:pointer; }
+
+  /* ===== โครงหน้า: แถบรายชื่อซ้าย + รายละเอียดขวา ===== */
+  .page{ max-width:1200px; margin:16px auto 0; padding:0 20px; display:grid; grid-template-columns:290px 1fr; gap:18px; align-items:start; }
+
+  .side{ position:sticky; top:12px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:12px;
+         max-height:calc(100vh - 24px); display:flex; flex-direction:column; gap:10px; }
+  .side h2{ font-size:13px; margin:2px 4px 0; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.06em; }
+  .side-search{ width:100%; font-family:var(--sans); font-size:13px; padding:8px 11px; border:1px solid var(--line); border-radius:10px; outline:none; color:var(--ink); }
+  .side-search:focus{ border-color:var(--teal); box-shadow:0 0 0 3px var(--teal-soft); }
+  .side-list{ overflow-y:auto; display:flex; flex-direction:column; gap:7px; padding:2px; }
+  .s-item{ position:relative; display:block; text-decoration:none; color:inherit; border:1.5px solid var(--line); border-radius:12px; padding:9px 12px; background:#fff; }
+  .s-item:hover{ border-color:var(--teal); }
+  .s-item.lvl0{ border-color:#3FA796; }
+  .s-item.lvl1{ border-color:#E8A33D; background:#FFFBF2; }
+  .s-item.lvl2{ border-color:#D64545; background:#FFF6F6; }
+  .s-item.nodata{ border-color:var(--line); }
+  .s-item.active{ box-shadow:0 0 0 3px var(--teal-soft); border-color:var(--teal); }
+  .s-item.active.lvl1{ box-shadow:0 0 0 3px #FBE7C2; border-color:#E8A33D; }
+  .s-item.active.lvl2{ box-shadow:0 0 0 3px #F6CACA; border-color:#D64545; }
+  .s-pid{ font-size:10.5px; color:var(--ink-dim); }
+  .s-name{ font-weight:700; font-size:14px; padding-right:30px; }
+  .s-vals{ margin-top:3px; font-family:var(--mono); font-size:11.5px; color:var(--ink-dim); }
+  .s-vals b{ font-weight:700; color:var(--ink); }
+  .s-vals b.abn{ color:var(--danger); } .s-vals b.warn{ color:#C47F0A; }
+  .s-flag{ position:absolute; top:8px; right:8px; min-width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+           font-weight:800; font-size:13px; color:#fff; padding:0 5px; letter-spacing:-1px; }
+  .s-flag.f1{ background:#E8A33D; } .s-flag.f2{ background:#D64545; }
+  .side-empty{ font-size:12.5px; color:var(--ink-dim); text-align:center; padding:14px 4px; }
+  /* มือถือ: ซ่อนแถบรายชื่อ ใช้ปุ่ม "← รายชื่อคนไข้" แทน (ต้องอยู่หลัง .side เพื่อให้ทับได้) */
+  @media (max-width: 820px){ .page{ grid-template-columns:1fr; } .side{ display:none; } }
+
+  .detail{ display:flex; flex-direction:column; gap:14px; min-width:0; }
+  .back{ display:inline-block; text-decoration:none; color:var(--teal-deep); font-size:13px; font-weight:700; padding:6px 0; }
+  .back:hover{ text-decoration:underline; }
+
+  .headline{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px 22px; }
+  .headline .name{ font-size:20px; font-weight:700; }
+  .headline .pid{ font-size:12px; color:var(--ink-dim); margin-bottom:14px; }
+  .stat-row{ display:grid; grid-template-columns: repeat(3,1fr); gap:10px; }
+  @media (max-width: 480px){ .stat-row{ grid-template-columns:1fr; } }
+  .stat{ background:var(--teal-soft); border-radius:12px; padding:10px 12px; }
+  .stat .l{ font-size:10px; text-transform:uppercase; color:var(--teal-deep); }
+  .stat .v{ font-family:var(--mono); font-size:22px; font-weight:700; color:var(--ink); }
+  .stat .v.abn{ color: var(--danger); }
+  .stat .v.warn{ color:#C47F0A; }
+  .stat .u{ font-size:10px; color:var(--ink-dim); margin-left:2px; }
+  .stat .t{ font-size:11px; color:var(--ink-dim); margin-top:4px; }
+
+  .alert-bar{ display:flex; align-items:center; gap:12px; border-radius:12px; padding:10px 14px; margin-bottom:14px; font-size:13px; line-height:1.5; }
+  .alert-bar.a1{ background:#FDF3E3; color:#8A5A0A; }
+  .alert-bar.a2{ background:#FDECEC; color:#B02F2F; }
+  .alert-bar b{ display:block; font-size:14px; }
+  .flag{ min-width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+         font-weight:800; font-size:22px; color:#fff; padding:0 8px; flex-shrink:0; letter-spacing:-1px; }
+  .flag.f1{ background:#E8A33D; }
+  .flag.f2{ background:#D64545; animation:flagpulse 1.4s infinite; }
+  @keyframes flagpulse{ 50%{ transform:scale(1.12); } }
+
+  .toolrow{ display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
+  .range{ display:flex; gap:5px; flex-wrap:wrap; }
+  .rbtn{ font-family:var(--sans); font-size:12px; font-weight:700; padding:6px 12px; border-radius:9px; cursor:pointer;
+         border:1px solid var(--line); background:#fff; color:var(--ink-dim); }
+  .rbtn.active{ background:var(--teal-soft); border-color:var(--teal-soft); color:var(--teal-deep); }
+  .legend{ display:flex; gap:12px; flex-wrap:wrap; font-size:12px; color:var(--ink-dim); align-items:center; }
+  .legend i{ display:inline-block; width:11px; height:11px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
+
+  .chart-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
+  @media (max-width: 700px){ .chart-grid{ grid-template-columns: 1fr; } }
+  .chart-card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px 18px 10px; position:relative; }
+  .chart-card h3{ font-size:12px; text-transform:uppercase; color:var(--ink-dim); margin:0 0 8px; display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+  .chart-card h3 .keys{ text-transform:none; font-weight:400; font-size:11px; }
+  .chart-card h3 .keys i{ display:inline-block; width:14px; height:3px; margin:0 4px 3px 8px; vertical-align:middle; }
+  .chart-box{ position:relative; height:190px; }
+  .chart-card .empty-note{ display:none; position:absolute; inset:44px 18px 10px; align-items:center; justify-content:center; text-align:center; color:var(--ink-dim); font-size:13px; }
+  .chart-card.empty .empty-note{ display:flex; }
+  .chart-card.empty .chart-box{ visibility:hidden; }
+  .wide{ grid-column:1/-1; }
+  .no-data{ text-align:center; color:var(--ink-dim); font-size:13px; padding: 60px 20px; background:var(--card); border:1px solid var(--line); border-radius:16px; }
+  .info{ font-size:11.5px; color:var(--ink-dim); }
+
+  .rules{ font-size:12.5px; color:var(--ink-dim); }
+  .rules summary{ cursor:pointer; font-weight:700; }
+  .rules table{ border-collapse:collapse; margin-top:8px; background:var(--card); font-size:12px; }
+  .rules th, .rules td{ border:1px solid var(--line); padding:6px 10px; text-align:left; }
+  .rules th{ background:var(--teal-soft); color:var(--teal-deep); }
+  .rules .g{ color:#1F7A68; font-weight:700; } .rules .y{ color:#8A5A0A; font-weight:700; } .rules .r{ color:#B02F2F; font-weight:700; }
+</style>
+</head>
+<body>
+
+  <div class="nav">
+    <div class="who" id="whoBox">... <span>...</span></div>
+    <div class="tabs">
+      <a href="dashboard.html" class="active">Dashboard</a>
+      <a href="calendar.html">ปฏิทิน</a>
+      <a href="report.html">รายงาน</a>
+    </div>
+    <a class="logout" id="logoutLink">ออกจากระบบ</a>
+  </div>
+
+  <div class="page">
+    <aside class="side">
+      <h2>รายชื่อคนไข้</h2>
+      <input class="side-search" id="sideQ" type="search" placeholder="ค้นหาชื่อหรือรหัส" autocomplete="off" />
+      <div class="side-list" id="sideList"></div>
+    </aside>
+
+    <main class="detail" id="detail">
+      <a class="back" href="dashboard.html">← รายชื่อคนไข้</a>
+
+      <div class="headline">
+        <div class="pid" id="dPid">—</div>
+        <div class="name" id="dName">กำลังโหลด...</div>
+        <div class="alert-bar" id="dAlert" style="display:none;"></div>
+        <div class="stat-row">
+          <div class="stat"><div class="l">Heart Rate</div><div class="v" id="dHR">--<span class="u">bpm</span></div><div class="t" id="dHRt"></div></div>
+          <div class="stat"><div class="l">Blood Pressure</div><div class="v" id="dBP">--/--<span class="u">mmHg</span></div><div class="t" id="dBPt"></div></div>
+          <div class="stat"><div class="l">SpO2</div><div class="v" id="dSpo2">--<span class="u">%</span></div><div class="t" id="dSpo2t"></div></div>
+        </div>
+      </div>
+
+      <div id="chartArea">
+        <div class="toolrow">
+          <div class="range" id="rangeBar">
+            <button type="button" class="rbtn" data-r="last20">ล่าสุด 20 ครั้ง</button>
+            <button type="button" class="rbtn" data-r="today">วันนี้</button>
+            <button type="button" class="rbtn" data-r="7d">7 วัน</button>
+            <button type="button" class="rbtn" data-r="all">ทั้งหมด</button>
+          </div>
+          <div class="legend">
+            <span><i style="background:#3FA796"></i>ปกติ</span>
+            <span><i style="background:#E8A33D"></i>เฝ้าสังเกต</span>
+            <span><i style="background:#D64545"></i>ผิดปกติมาก</span>
+          </div>
+        </div>
+        <div class="chart-grid" style="margin-top:12px;" id="chartGrid">
+          <div class="chart-card" id="cardHR"><h3>Heart Rate (bpm)</h3><div class="chart-box"><canvas id="chartHR"></canvas></div><div class="empty-note">ไม่มีข้อมูลในช่วงเวลานี้</div></div>
+          <div class="chart-card" id="cardBP"><h3>Blood Pressure (mmHg)<span class="keys"><i style="background:#0E7C86"></i>ตัวบน<i style="background:#E8A33D"></i>ตัวล่าง</span></h3><div class="chart-box"><canvas id="chartBP"></canvas></div><div class="empty-note">ไม่มีข้อมูลในช่วงเวลานี้</div></div>
+          <div class="chart-card wide" id="cardSpo2"><h3>SpO2 (%)</h3><div class="chart-box"><canvas id="chartSpo2"></canvas></div><div class="empty-note">ไม่มีข้อมูลในช่วงเวลานี้</div></div>
+        </div>
+        <div class="info" id="rangeInfo" style="margin-top:8px;"></div>
+      </div>
+      <div class="no-data" id="noDataMsg" style="display:none;">คนไข้รายนี้ยังไม่มีข้อมูล Vital Signs เข้ามา</div>
+
+      <details class="rules">
+        <summary>ดูเกณฑ์สี (ค่าตัวอย่าง — รอยืนยันจากแพทย์)</summary>
+        <table>
+          <tr><th></th><th class="g">ปกติ (เขียว)</th><th class="y">เฝ้าสังเกต (เหลือง !)</th><th class="r">ผิดปกติมาก (แดง !!)</th></tr>
+          <tr><td>ชีพจร (bpm)</td><td>60 – 100</td><td>50 – 59 หรือ 101 – 120</td><td>ต่ำกว่า 50 หรือมากกว่า 120</td></tr>
+          <tr><td>ความดันตัวบน (mmHg)</td><td>100 – 140</td><td>90 – 99 หรือ 141 – 160</td><td>ต่ำกว่า 90 หรือมากกว่า 160</td></tr>
+          <tr><td>SpO2 (%)</td><td>95 ขึ้นไป</td><td>92 – 94</td><td>ต่ำกว่า 92</td></tr>
+        </table>
+        <p style="margin:8px 0 0;">จุดบนกราฟแต่ละจุดคือผลวัดหนึ่งครั้ง สีของจุดตามเกณฑ์ด้านบน (ความดันใช้ค่าตัวบนตัดสินทั้งตัวบนและตัวล่าง)</p>
+      </details>
+    </main>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+
+  async function checkAuth(){
+    const res = await fetch('/api/auth/me', { credentials:'include' });
+    const data = await res.json();
+    if (!data.loggedIn || data.user.role !== 'doctor'){
+      window.location.href = 'login.html';
+      return false;
+    }
+    $('whoBox').innerHTML = `${esc(data.user.name)} <span>${esc(data.user.doctorId)}</span>`;
+    return true;
+  }
+  $('logoutLink').addEventListener('click', async () => {
+    await fetch('/api/auth/logout', { method:'POST', credentials:'include' });
+    window.location.href = 'login.html';
+  });
+
+  /* ===== LEVELS-BLOCK: เกณฑ์ระดับการแจ้งเตือน (ค่าตั้งต้นตัวอย่าง — ปรับตามแพทย์ได้) =====
+     ใช้เหมือนกันทุกหน้า (dashboard / patient ของหมอ และ vitals ของคนไข้) แก้ที่เดียวให้ตรงกันทั้ง 3 ไฟล์
+     0 = ปกติ (เขียว), 1 = ผิดปกติเล็กน้อย (เหลือง !), 2 = ผิดปกติมาก (แดง !!) */
+  const hasVal = (x) => x !== null && x !== undefined && isFinite(x);
+  const lvHR   = (v) => !hasVal(v) ? 0 : (v < 50 || v > 120) ? 2 : (v < 60 || v > 100) ? 1 : 0;
+  const lvSys  = (v) => !hasVal(v) ? 0 : (v < 90 || v > 160) ? 2 : (v < 100 || v > 140) ? 1 : 0;
+  const lvSpo2 = (v) => !hasVal(v) ? 0 : (v < 92) ? 2 : (v < 95) ? 1 : 0;
+  const LV_COLOR = { 0:'#3FA796', 1:'#E8A33D', 2:'#D64545' };
+  const LV_NAME  = { 0:'ปกติ', 1:'เฝ้าสังเกต', 2:'ผิดปกติมาก' };
+  /* ===== END LEVELS-BLOCK ===== */
+
+  const showVal = (x, suffix) => hasVal(x) ? x + (suffix || '') : '--';
+  const showBP = (r) => (hasVal(r.systolic) && hasVal(r.diastolic)) ? r.systolic + '/' + r.diastolic : '--';
+  const timeShort = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts), now = new Date();
+    const hhmm = d.toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit', hour12:false });
+    return d.toDateString() === now.toDateString() ? 'วัดเมื่อ ' + hhmm : 'วัดเมื่อ ' + d.toLocaleDateString('th-TH', { day:'numeric', month:'short' }) + ' ' + hhmm;
+  };
+
+  function levelOf(field, r){
+    if (!r || !r.hasData) return 0;
+    if (field === 'hr') return lvHR(r.heartRate);
+    if (field === 'sys') return lvSys(r.systolic);
+    if (field === 'spo2') return lvSpo2(r.spo2);
+    return 0;
+  }
+  function cls(field, r){ const l = levelOf(field, r); return l === 2 ? 'abn' : (l === 1 ? 'warn' : ''); }
+  function issuesOf(r){
+    const out = [];
+    let l;
+    if ((l = levelOf('hr', r)))   out.push({ level:l, text:`HR ${r.heartRate < 60 ? 'ต่ำ' : 'สูง'}${l === 2 ? 'มาก' : 'เล็กน้อย'} (${r.heartRate} bpm)` });
+    if ((l = levelOf('sys', r)))  out.push({ level:l, text:`ความดัน${r.systolic < 100 ? 'ต่ำ' : 'สูง'}${l === 2 ? 'มาก' : 'เล็กน้อย'} (${r.systolic}/${r.diastolic})` });
+    if ((l = levelOf('spo2', r))) out.push({ level:l, text:`SpO2 ต่ำ${l === 2 ? 'มาก' : 'เล็กน้อย'} (${r.spo2}%)` });
+    return out;
+  }
+  function patientLevel(r){
+    if (!r || !r.hasData) return -1;
+    return issuesOf(r).reduce((m, x) => Math.max(m, x.level), 0);
+  }
+  const LEVEL_TITLE = { 1:'ค่าผิดปกติเล็กน้อย — ควรเฝ้าสังเกต', 2:'ผิดปกติมาก — ควรรีบตรวจสอบ' };
+
+  // ----- สถานะ -----
+  let selectedId = new URLSearchParams(location.search).get('id');
+  let patients = [];        // รายชื่อ (จาก /api/patients/latest)
+  let sideQuery = '';
+  let range = 'last20';     // last20 | today | 7d | all
+  try { range = sessionStorage.getItem('doc_range') || 'last20'; } catch (e) {}
+  let reqSeq = 0;
+  let lastRecords = null;   // ข้อมูลของคนไข้ที่เลือก (ใหม่สุดก่อน) ไว้วาดซ้ำเมื่อเปลี่ยนช่วงเวลา
+
+  if (!selectedId) { window.location.replace('dashboard.html'); }
+
+  // ===== แถบรายชื่อซ้าย =====
+  function sideItemHtml(r){
+    const lv = patientLevel(r);
+    const vals = r.hasData
+      ? `HR <b class="${cls('hr', r)}">${showVal(r.heartRate)}</b> · <b class="${cls('sys', r)}">${showBP(r)}</b> · <b class="${cls('spo2', r)}">${showVal(r.spo2, '%')}</b>`
+      : 'ยังไม่มีข้อมูล';
+    return `<a class="s-item ${lv < 0 ? 'nodata' : 'lvl' + lv} ${r.patientId === selectedId ? 'active' : ''}" href="patient.html?id=${encodeURIComponent(r.patientId)}" data-pid="${esc(r.patientId)}">
+      <div class="s-pid">${esc(r.patientId)}</div>
+      <div class="s-name">${esc(r.patientName)}</div>
+      <div class="s-vals">${vals}</div>
+      ${lv > 0 ? `<div class="s-flag f${lv}">${lv === 2 ? '!!' : '!'}</div>` : ''}
+    </a>`;
+  }
+  function renderSide(){
+    const q = sideQuery.trim().toLowerCase();
+    const shown = patients.filter(r => !q || String(r.patientId).toLowerCase().includes(q) || String(r.patientName).toLowerCase().includes(q));
+    const box = $('sideList');
+    const keep = box.scrollTop;
+    box.innerHTML = shown.length ? shown.map(sideItemHtml).join('') : '<div class="side-empty">ไม่พบคนไข้</div>';
+    box.scrollTop = keep;
+  }
+  $('sideQ').addEventListener('input', () => { sideQuery = $('sideQ').value; renderSide(); });
+  $('sideList').addEventListener('click', (e) => {
+    const a = e.target.closest('.s-item');
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+    e.preventDefault();
+    selectPatient(a.dataset.pid, true);
+  });
+
+  function selectPatient(id, push){
+    if (id === selectedId) return;
+    selectedId = id;
+    if (push) history.pushState({}, '', 'patient.html?id=' + encodeURIComponent(id));
+    lastRecords = null;
+    renderSide();
+    loadDetail();
+  }
+  window.addEventListener('popstate', () => {
+    const id = new URLSearchParams(location.search).get('id');
+    if (!id) { window.location.replace('dashboard.html'); return; }
+    selectedId = id; lastRecords = null; renderSide(); loadDetail();
+  });
+
+  async function loadSide(){
+    const res = await fetch('/api/patients/latest', { credentials:'include' });
+    const data = await res.json();
+    if (!Array.isArray(data)) return;
+    data.sort((a, b) => (patientLevel(b) - patientLevel(a)) || String(a.patientId).localeCompare(String(b.patientId)));
+    patients = data;
+    renderSide();
+  }
+
+  // ===== กราฟ =====
+  const charts = {};
+  function mkChart(canvasId, datasets, extra){
+    return new Chart($(canvasId), {
+      type:'line',
+      data:{ labels:[], datasets },
+      options:{
+        responsive:true, maintainAspectRatio:false, animation:false,
+        interaction:{ mode:'nearest', intersect:false },
+        plugins:{
+          legend:{ display:false },
+          tooltip:{
+            callbacks:{
+              title:(items) => { const c = items[0].chart; const r = c.$recs && c.$recs[items[0].dataIndex]; return r ? new Date(r.timestamp).toLocaleString('th-TH') : ''; },
+              label:(item) => { const c = item.chart; const name = c.$names ? c.$names[item.datasetIndex] : ''; return name + ': ' + item.parsed.y; },
+              afterLabel:(item) => { const c = item.chart; const r = c.$recs && c.$recs[item.dataIndex]; return r && c.$level ? 'ระดับ' + (c.$levelNote || '') + ': ' + LV_NAME[c.$level(r)] : ''; },
+            }
+          }
+        },
+        scales:{
+          x:{ ticks:{ font:{ size:9 }, maxTicksLimit:8, maxRotation:0 }, grid:{ display:false } },
+          y:Object.assign({ ticks:{ font:{ size:9 } }, grid:{ color:'#EEF3F2' } }, extra || {}),
+        },
+      }
+    });
+  }
+  function ds(color, fill){
+    return { data:[], borderColor:color, backgroundColor:color + '22', tension:0.35, fill:!!fill, borderWidth:2,
+             pointRadius:4, pointHoverRadius:6, pointBackgroundColor:[], pointBorderColor:[], pointBorderWidth:1 };
+  }
+  function ensureCharts(){
+    if (charts.hr) return;
+    charts.hr   = mkChart('chartHR',   [ds('#0E7C86', true)]);
+    charts.bp   = mkChart('chartBP',   [ds('#0E7C86', true), ds('#E8A33D', false)]);
+    charts.spo2 = mkChart('chartSpo2', [ds('#3FA796', true)], { suggestedMax:100 });
+    charts.hr.$names = ['HR (bpm)'];
+    charts.bp.$names = ['ตัวบน (Sys)', 'ตัวล่าง (Dia)'];
+    charts.bp.$levelNote = ' (ตามความดันตัวบน)';
+    charts.spo2.$names = ['SpO2 (%)'];
+    charts.hr.$level   = (r) => lvHR(r.heartRate);
+    charts.bp.$level   = (r) => lvSys(r.systolic);
+    charts.spo2.$level = (r) => lvSpo2(r.spo2);
+  }
+
+  function pickRange(recsOldToNew){
+    const now = Date.now();
+    if (range === 'today'){
+      const s = new Date(); s.setHours(0, 0, 0, 0);
+      return recsOldToNew.filter(r => new Date(r.timestamp) >= s);
+    }
+    if (range === '7d') return recsOldToNew.filter(r => now - new Date(r.timestamp).getTime() <= 7 * 86400000);
+    if (range === 'all') return recsOldToNew.slice(-400);
+    return recsOldToNew.slice(-20);
+  }
+  function labelsFor(recs){
+    if (!recs.length) return [];
+    const multi = new Date(recs[0].timestamp).toDateString() !== new Date(recs[recs.length - 1].timestamp).toDateString();
+    return recs.map(r => {
+      const d = new Date(r.timestamp);
+      const t = d.toLocaleTimeString('th-TH', { hour:'2-digit', minute:'2-digit', hour12:false });
+      return multi ? d.getDate() + '/' + (d.getMonth() + 1) + ' ' + t : t;
+    });
+  }
+  function fillChart(chart, cardId, recs, valueFns, levelFn){
+    const card = $(cardId);
+    card.classList.toggle('empty', !recs.length);
+    const colors = recs.map(r => LV_COLOR[levelFn(r)]);
+    const radius = recs.length <= 60 ? 4 : (recs.length <= 150 ? 3 : 2);
+    chart.$recs = recs;
+    chart.data.labels = labelsFor(recs);
+    chart.data.datasets.forEach((d, i) => {
+      d.data = recs.map(valueFns[i]);
+      d.pointBackgroundColor = colors;
+      d.pointBorderColor = colors;
+      d.pointRadius = radius;
+      d.pointHoverRadius = radius + 2;
+    });
+    chart.update();
+  }
+
+  const RANGE_INFO = {
+    last20:'แสดงผลวัดล่าสุดสูงสุด 20 ครั้งต่อกราฟ',
+    today:'แสดงผลวัดของวันนี้',
+    '7d':'แสดงผลวัดย้อนหลัง 7 วัน',
+    all:'แสดงผลวัดทั้งหมด (สูงสุด 400 ครั้งล่าสุดต่อกราฟ)',
+  };
+  function renderRangeBar(){
+    $('rangeBar').querySelectorAll('.rbtn').forEach(b => b.classList.toggle('active', b.dataset.r === range));
+    $('rangeInfo').textContent = RANGE_INFO[range];
+  }
+  $('rangeBar').addEventListener('click', (e) => {
+    const b = e.target.closest('.rbtn');
+    if (!b) return;
+    range = b.dataset.r;
+    try { sessionStorage.setItem('doc_range', range); } catch (e2) {}
+    renderRangeBar();
+    if (lastRecords) drawCharts(lastRecords);
+  });
+
+  function drawCharts(recordsDesc){
+    ensureCharts();
+    const asc = [...recordsDesc].reverse();
+    const sHR = pickRange(asc.filter(r => hasVal(r.heartRate)));
+    const sBP = pickRange(asc.filter(r => hasVal(r.systolic) && hasVal(r.diastolic)));
+    const sSp = pickRange(asc.filter(r => hasVal(r.spo2)));
+    fillChart(charts.hr,   'cardHR',   sHR, [r => r.heartRate], charts.hr.$level);
+    fillChart(charts.bp,   'cardBP',   sBP, [r => r.systolic, r => r.diastolic], charts.bp.$level);
+    fillChart(charts.spo2, 'cardSpo2', sSp, [r => r.spo2], charts.spo2.$level);
+  }
+
+  // ===== รายละเอียดคนไข้ที่เลือก =====
+  function clearStats(){
+    $('dHR').innerHTML = '--<span class="u">bpm</span>'; $('dHR').className = 'v'; $('dHRt').textContent = '';
+    $('dBP').innerHTML = '--/--<span class="u">mmHg</span>'; $('dBP').className = 'v'; $('dBPt').textContent = '';
+    $('dSpo2').innerHTML = '--<span class="u">%</span>'; $('dSpo2').className = 'v'; $('dSpo2t').textContent = '';
+    $('dAlert').style.display = 'none';
+  }
+
+  async function loadDetail(){
+    if (!selectedId) return;
+    const id = selectedId;
+    const my = ++reqSeq;
+    const res = await fetch('/api/vitals/' + encodeURIComponent(id), { credentials:'include' });
+    let records = await res.json();
+    if (my !== reqSeq || id !== selectedId) return; // สลับคนไข้ระหว่างโหลด — ทิ้งผลเก่า
+    if (!Array.isArray(records)) return;
+    records = [...records].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)); // ใหม่สุดก่อน
+
+    const p = patients.find(x => x.patientId === id);
+    $('dPid').textContent = id;
+    $('dName').textContent = p ? p.patientName : (records[0] ? records[0].patientName : id);
+    document.title = ($('dName').textContent || 'คนไข้') + ' — Doctor';
+
+    if (!records.length){
+      lastRecords = [];
+      clearStats();
+      $('chartArea').style.display = 'none';
+      $('noDataMsg').style.display = 'block';
+      return;
+    }
+    $('chartArea').style.display = '';
+    $('noDataMsg').style.display = 'none';
+    lastRecords = records;
+
+    // ค่าล่าสุดของแต่ละอย่างหาจากรายการล่าสุดที่ "มีค่านั้น" (นาฬิกาบางรุ่นวัดทีละอย่าง)
+    const lastHR = records.find(r => hasVal(r.heartRate));
+    const lastSp = records.find(r => hasVal(r.spo2));
+    const lastBP = records.find(r => hasVal(r.systolic) && hasVal(r.diastolic));
+    const lr = {
+      hasData: true,
+      heartRate: lastHR ? lastHR.heartRate : null,
+      spo2: lastSp ? lastSp.spo2 : null,
+      systolic: lastBP ? lastBP.systolic : null,
+      diastolic: lastBP ? lastBP.diastolic : null,
+    };
+
+    $('dHR').innerHTML = showVal(lr.heartRate) + '<span class="u">bpm</span>';
+    $('dHR').className = 'v ' + cls('hr', lr);
+    $('dHRt').textContent = lastHR ? timeShort(lastHR.timestamp) : 'ยังไม่มีค่า';
+    $('dBP').innerHTML = showBP(lr) + '<span class="u">mmHg</span>';
+    $('dBP').className = 'v ' + cls('sys', lr);
+    $('dBPt').textContent = lastBP ? timeShort(lastBP.timestamp) : 'ยังไม่มีค่า';
+    $('dSpo2').innerHTML = showVal(lr.spo2) + '<span class="u">%</span>';
+    $('dSpo2').className = 'v ' + cls('spo2', lr);
+    $('dSpo2t').textContent = lastSp ? timeShort(lastSp.timestamp) : 'ยังไม่มีค่า';
+
+    // แถบแจ้งเตือนของคนไข้ที่เลือก (คงไว้)
+    const lv = patientLevel(lr);
+    if (lv > 0){
+      $('dAlert').className = 'alert-bar a' + lv;
+      $('dAlert').innerHTML = `<div class="flag f${lv}">${lv === 2 ? '!!' : '!'}</div><div><b>${LEVEL_TITLE[lv]}</b>${issuesOf(lr).map(x => esc(x.text)).join(' • ')}</div>`;
+      $('dAlert').style.display = 'flex';
+    } else {
+      $('dAlert').style.display = 'none';
+    }
+
+    drawCharts(records);
+  }
+
+  async function tick(){
+    try { await loadSide(); } catch (e) {}
+    try { await loadDetail(); } catch (e) {}
+  }
+
+  (async function init(){
+    if (!selectedId) return;
+    if (!(await checkAuth())) return;
+    renderRangeBar();
+    await tick();
+    // ไม่มีรหัสนี้ในระบบ → กลับหน้ารายชื่อ
+    if (patients.length && !patients.some(p => p.patientId === selectedId)) { window.location.replace('dashboard.html'); return; }
+    setInterval(tick, 5000);
+  })();
+</script>
+</body>
+</html>
